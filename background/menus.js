@@ -1,7 +1,7 @@
 // Background Service Worker - 컨텍스트 메뉴 관리 및 OpenAI API
 
 // OpenAI API 키 저장 변수
-let OPENAI_API_KEY = '';  // 테스트 시: 'sk-...' 직접 입력 가능
+let OPENAI_API_KEY = null;  // 테스트 시: 'sk-...' 직접 입력 가능
 
 // API 키 로드 함수 (분리된 경로)
 async function loadApiKey() {
