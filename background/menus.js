@@ -1,13 +1,21 @@
 // Background Service Worker - 컨텍스트 메뉴 관리 및 OpenAI API
 
 // OpenAI API 키 저장 변수
-let OPENAI_API_KEY = null;
+let OPENAI_API_KEY = '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';  // 테스트 시: 'sk-...' 직접 입력 가능
 
 // API 키 로드 함수 (분리된 경로)
 async function loadApiKey() {
+  // 이미 하드코딩된 키가 있으면 그대로 사용
+  if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-')) {
+    console.log('[Background] Using hardcoded API key');
+    return OPENAI_API_KEY;
+  }
+
   return new Promise((resolve) => {
     chrome.storage.local.get(['OPENAI_API_KEY'], (res) => {
-      OPENAI_API_KEY = res.OPENAI_API_KEY || null;
+      if (res.OPENAI_API_KEY) {
+        OPENAI_API_KEY = res.OPENAI_API_KEY;
+      }
       console.log('[Background] API key loaded:', !!OPENAI_API_KEY);
       resolve(OPENAI_API_KEY);
     });
@@ -52,6 +60,11 @@ chrome.runtime.onStartup.addListener(() => {
 // API 키 변경 감지
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.OPENAI_API_KEY) {
+    // 하드코딩된 키가 있고 새 값이 없으면 무시
+    if (OPENAI_API_KEY && OPENAI_API_KEY.startsWith('sk-') && !changes.OPENAI_API_KEY.newValue) {
+      console.log('[Background] Keeping hardcoded API key');
+      return;
+    }
     OPENAI_API_KEY = changes.OPENAI_API_KEY.newValue;
     console.log('[Background] API key updated:', !!OPENAI_API_KEY);
   }
@@ -82,7 +95,7 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 // OpenAI API 호출 함수
-async function callOpenAI({ messages, model = 'gpt-4o-mini', temperature = 0.2, max_tokens = 2000, stream = false, timeout = 30000 }) {
+async function callOpenAI({ messages, model = 'gpt-4o-mini', temperature = 0.2, max_tokens = 2000, stream = false, timeout = 30000, reqId = null }) {
   // API 키가 없으면 로드 시도
   if (!OPENAI_API_KEY) {
     console.log('[Background] API key not in memory, loading from storage...');
@@ -94,9 +107,10 @@ async function callOpenAI({ messages, model = 'gpt-4o-mini', temperature = 0.2, 
     }
   }
 
+  // OpenAI API 표준 형식 사용
   const body = {
     model,
-    messages,
+    messages,  // OpenAI는 messages 형식만 지원
     temperature,
     max_tokens,
     ...(stream ? { stream: true, stream_options: { include_usage: true } } : {})
@@ -144,20 +158,30 @@ async function callOpenAI({ messages, model = 'gpt-4o-mini', temperature = 0.2, 
         for (const line of lines) {
           if (!line.startsWith('data:')) continue;
           const payload = line.slice(5).trim();
-          if (payload === '[DONE]') return;
+          if (payload === '[DONE]') { clearTimeout(timeoutId); return; }
 
           try {
             const json = JSON.parse(payload);
-            // 스트림 청크를 content script로 전달
+            // 스트림 청크를 content script로 전달 (reqId 포함)
             chrome.runtime.sendMessage({
               topic: 'llm:chunk',
+              reqId: reqId,
               chunk: json
+            }, () => {
+              // 수신자가 없을 경우 발생하는 에러 무시
+              if (chrome.runtime.lastError) {
+                // "Receiving end does not exist" 에러는 무시 (리스너가 없는 경우)
+                if (!chrome.runtime.lastError.message.includes('Receiving end does not exist')) {
+                  console.log('[Background] Stream chunk send warning:', chrome.runtime.lastError.message);
+                }
+              }
             });
           } catch (e) {
             console.error('[Background] Stream parse error:', e);
           }
         }
       }
+      clearTimeout(timeoutId);
       return;
     } else {
       const data = await response.json();
@@ -686,16 +710,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // 새로운 메시지 형식 처리 (topic 기반)
   if (request.topic === 'llm:call') {
-    console.log('[Background] LLM call requested');
+    console.log('[Background] LLM call requested with reqId:', request.reqId);
 
-    callOpenAI(request.payload).then(
+    // reqId를 payload에 포함시켜 전달
+    const payloadWithReqId = { ...request.payload, reqId: request.reqId };
+
+    callOpenAI(payloadWithReqId).then(
       (result) => {
-        console.log('[Background] LLM call success');
-        sendResponse({ ok: true, ...result });
+        console.log('[Background] LLM call success for reqId:', request.reqId);
+        sendResponse({ ok: true, reqId: request.reqId, ...result });
       },
       (error) => {
-        console.error('[Background] LLM call error:', error);
-        sendResponse({ ok: false, error: error.message });
+        console.error('[Background] LLM call error for reqId:', request.reqId, error);
+        sendResponse({ ok: false, reqId: request.reqId, error: error.message });
       }
     );
     return true; // 비동기 응답
@@ -729,18 +756,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
   }
 
-  // API 키 가져오기 요청
-  if (request.topic === 'llm:getApiKey') {
-    if (!OPENAI_API_KEY) {
-      loadApiKey().then((key) => {
-        sendResponse({ ok: true, apiKey: key });
-      });
-      return true; // 비동기 응답
-    } else {
-      sendResponse({ ok: true, apiKey: OPENAI_API_KEY });
-      return false; // 동기 응답
-    }
-  }
+  // API 키 가져오기 요청 - 보안상 제거
+  // API 키를 content script로 노출하면 보안 위험이 있음
+  // if (request.topic === 'llm:getApiKey') {
+  //   if (!OPENAI_API_KEY) {
+  //     loadApiKey().then((key) => {
+  //       sendResponse({ ok: true, apiKey: key });
+  //     });
+  //     return true; // 비동기 응답
+  //   } else {
+  //     sendResponse({ ok: true, apiKey: OPENAI_API_KEY });
+  //     return false; // 동기 응답
+  //   }
+  // }
 
   // 기존 메시지 형식 처리 (type 기반)
   switch(request.type) {

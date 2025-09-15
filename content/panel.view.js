@@ -496,19 +496,23 @@ ${reasonContent}
 - 결론/주문: 2~3개 불릿(이자율·기산점 포함)
 제한: 전체 600~800자`;
 
+    // 요청 식별자 생성 (동시 요청 구분용)
+    const reqId = crypto.randomUUID?.() || String(Date.now()) + '_' + Math.random();
+
     // background script로 메시지 전송
     return new Promise((resolve) => {
       chrome.runtime.sendMessage({
         topic: 'llm:call',
+        reqId: reqId,
         payload: {
-          messages: [
+          model: 'gpt-4o-mini',  // GPT-4o-mini 모델 사용
+          messages: [  // OpenAI API는 messages 형식 사용
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt }
           ],
-          model: 'gpt-4o-mini',
+          max_tokens: 2000,  // OpenAI는 max_tokens 사용
           temperature: 0.2,
-          max_tokens: 2000,
-          stream: false
+          stream: false  // 일단 스트리밍 비활성화 (안정성)
         }
       }, (response) => {
         // Chrome runtime 에러 체크
@@ -521,18 +525,24 @@ ${reasonContent}
           return;
         }
 
-        console.log('[Panel] LLM response:', response);
+        console.log('[Panel] LLM response for reqId:', reqId, response);
 
-        if (response && response.ok) {
+        // reqId 확인 (응답이 올바른 요청에 대한 것인지)
+        if (response && response.reqId === reqId && response.ok) {
           resolve({
             success: true,
             result: response.text,
             usage: response.usage
           });
-        } else {
+        } else if (response && !response.ok) {
           resolve({
             success: false,
             error: response?.error || 'API 호출 실패'
+          });
+        } else {
+          resolve({
+            success: false,
+            error: 'Invalid response or reqId mismatch'
           });
         }
       });

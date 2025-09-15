@@ -30,7 +30,7 @@
 5) '주문'은 요약의 앵커로 삼되 스코어링에는 포함하지 않는다.`,
       user: `[사용자 입력]
 판례 정보:
-- 유형: {caseType}
+- 유형: {caseType} 
 - 제목: {title}
 - 판례번호: {caseNumber}
 
@@ -76,18 +76,21 @@
 
     // background script로 메시지 전송
     const payload = {
-      model: 'gpt-4o-mini',  // 모델은 고정 (필요시 파라미터로 받도록 수정 가능)
-      temperature: 0.2,
-      max_tokens: 2000,
-      stream: false,
-      messages: [
+      model: 'gpt-4o-mini',  // GPT-4o-mini 모델 사용
+      messages: [  // OpenAI API는 messages 형식 사용
         { role: 'system', content: prompt.system },
         { role: 'user', content: userMessage }
-      ]
+      ],
+      max_tokens: 2000,  // OpenAI는 max_tokens 사용
+      temperature: 0.2,
+      stream: false  // 일단 스트리밍 비활성화 (안정성)
     };
 
+    // 요청 식별자 생성 (동시 요청 구분용)
+    const reqId = crypto.randomUUID?.() || String(Date.now()) + '_' + Math.random();
+
     return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ topic: 'llm:call', payload }, (response) => {
+      chrome.runtime.sendMessage({ topic: 'llm:call', reqId, payload }, (response) => {
         // Chrome runtime 에러 체크
         if (chrome.runtime.lastError) {
           console.error('[LLM API] Chrome runtime error:', chrome.runtime.lastError);
