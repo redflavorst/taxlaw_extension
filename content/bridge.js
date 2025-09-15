@@ -105,22 +105,37 @@
     let matchMethod = null;
     
     // 1. rowIndex 매칭 (최우선)
+    console.log('[Bridge] ===== ROW INDEX 매칭 시도 =====');
+    console.log('[Bridge] 저장된 판례 목록 개수:', savedPrecedentList.length);
+    console.log('[Bridge] 클릭한 rowIndex:', clickedInfo.rowIndex);
+    console.log('[Bridge] rowIndex 타입:', typeof clickedInfo.rowIndex);
+
     if (savedPrecedentList.length > 0) {
-      if (typeof clickedInfo.rowIndex === 'number' && 
-          clickedInfo.rowIndex >= 0 && 
+      if (typeof clickedInfo.rowIndex === 'number' &&
+          clickedInfo.rowIndex >= 0 &&
           savedPrecedentList[clickedInfo.rowIndex]) {
-        
+
         const matchedItem = savedPrecedentList[clickedInfo.rowIndex];
         matchedDocId = matchedItem.docId;
         matchMethod = 'index';
-        
-        console.log('[Bridge] ✅ Matched by index:', {
+
+        console.log('[Bridge] ✓ INDEX 매칭 성공!');
+        console.log('[Bridge] 매칭된 항목:', {
           rowIndex: clickedInfo.rowIndex,
           docId: matchedDocId,
-          caseNumber: matchedItem.caseNumber
+          caseNumber: matchedItem.caseNumber,
+          title: matchedItem.title
+        });
+      } else {
+        console.log('[Bridge] ✗ INDEX 매칭 실패');
+        console.log('[Bridge] 이유:', {
+          isNumber: typeof clickedInfo.rowIndex === 'number',
+          isPositive: clickedInfo.rowIndex >= 0,
+          itemExists: !!savedPrecedentList[clickedInfo.rowIndex]
         });
       }
     }
+    console.log('[Bridge] ============================');
     
     // 2. 판례번호 매칭 (차선책)
     if (!matchedDocId && clickedInfo.caseNumber) {
@@ -197,14 +212,15 @@
             return;
           }
           
-          // 패널 업데이트
+          // 패널 업데이트 (clickedInfo 포함)
           window.postMessage({
             type: 'MSG_UPDATE_PANEL',
             data: {
               docId: matchedDocId,
               success: detailResponse.success,
               detail: detailResponse.content,
-              error: detailResponse.error
+              error: detailResponse.error,
+              clickedInfo: clickedInfo  // 클릭한 정보 유지
             }
           }, window.location.origin);
         });
@@ -221,9 +237,17 @@
       }
       
       // 사이드 패널 열기 (로딩 상태로)
+      console.log('[Bridge] Opening panel with clickedInfo:', {
+        caseNumber: clickedInfo?.caseNumber,
+        caseType: clickedInfo?.caseType,
+        title: clickedInfo?.title,
+        rowIndex: clickedInfo?.rowIndex,
+        hasClickedInfo: !!clickedInfo
+      });
+
       window.postMessage({
         type: 'MSG_OPEN_PANEL',
-        data: { 
+        data: {
           docId: matchedDocId,
           matchMethod: matchMethod,
           clickedInfo: clickedInfo,

@@ -51,7 +51,7 @@
           // 다양한 응답 구조 처리
           let precedentList = null;
           
-          // 구조 1: ASIPDI002PR01.body
+          // 구조 1: .body
           if (jsonObj.data && jsonObj.data.ASIPDI002PR01 && jsonObj.data.ASIPDI002PR01.body) {
             precedentList = jsonObj.data.ASIPDI002PR01.body;
             console.log('[Injector] Found precedent list in ASIPDI002PR01:', precedentList.length, 'items');

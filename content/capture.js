@@ -3,7 +3,9 @@
 (function() {
   'use strict';
   
-  console.log('[Capture] Right-click capture loaded');
+  console.log('[Capture] ===== Right-click capture loaded =====');
+  console.log('[Capture] Current URL:', window.location.href);
+  console.log('[Capture] DOM ready state:', document.readyState);
   
   // 전역 변수로 마지막 클릭 정보 저장
   window.__lastClickedPrecedentInfo = null;
@@ -12,6 +14,9 @@
   
   // 우클릭 이벤트 리스너
   document.addEventListener('contextmenu', function(event) {
+    console.log('[Capture] ===== 우클릭 감지됨 =====');
+    console.log('[Capture] Target element:', event.target);
+
     let target = event.target;
     let precedentInfo = {
       timestamp: Date.now(),
@@ -30,37 +35,62 @@
       if (parentUL) {
         const allLIs = Array.from(parentUL.children);
         precedentInfo.rowIndex = allLIs.indexOf(closestLI);
-        console.log('[Capture] Row index:', precedentInfo.rowIndex);
+        console.log('[Capture] ===== ROW INDEX 계산 =====');
+        console.log('[Capture] 전체 LI 개수:', allLIs.length);
+        console.log('[Capture] 클릭한 항목의 Row Index:', precedentInfo.rowIndex);
+        console.log('[Capture] 클릭한 LI 요소:', closestLI);
+        console.log('[Capture] =============================');
+      } else {
+        console.log('[Capture] ERROR: bdltCtl 요소를 찾을 수 없음');
       }
       
-      // 2. 판례번호 추출
+      // 2. 유형 추출 (첫 번째 li 요소)
+      // 구조: div > div > a > ul > li:first-child
+      console.log('[Capture] Looking for caseType element...');
+      const caseTypeElement = closestLI.querySelector(
+        'div:first-child > div:first-child > a > ul > li:first-child'
+      );
+      console.log('[Capture] caseTypeElement found:', !!caseTypeElement);
+      if (caseTypeElement) {
+        precedentInfo.caseType = caseTypeElement.textContent.trim();
+        console.log('[Capture] Case type extracted:', precedentInfo.caseType);
+      } else {
+        console.log('[Capture] Failed to find caseType element');
+        // 다른 선택자 시도
+        const altCaseType = closestLI.querySelector('a ul li:first-child');
+        console.log('[Capture] Alternative caseType element:', !!altCaseType);
+        if (altCaseType) {
+          precedentInfo.caseType = altCaseType.textContent.trim();
+          console.log('[Capture] Case type (alt):', precedentInfo.caseType);
+        }
+      }
+
+      // 3. 판례번호 추출
       // 구조: div > div > ul > li:first-child > strong
+      console.log('[Capture] Looking for caseNumber element...');
       const caseNumberElement = closestLI.querySelector(
         'div:first-child > div:first-child > ul > li:first-child > strong'
       );
+      console.log('[Capture] caseNumberElement found:', !!caseNumberElement);
       if (caseNumberElement) {
         precedentInfo.caseNumber = caseNumberElement.textContent.trim();
-        console.log('[Capture] Case number:', precedentInfo.caseNumber);
+        console.log('[Capture] Case number extracted:', precedentInfo.caseNumber);
+      } else {
+        console.log('[Capture] Failed to find caseNumber element');
       }
-      
-      // 3. 날짜 추출
-      // 구조: div > div > ul > li:nth-child(2) > span
-      const dateElement = closestLI.querySelector(
-        'div:first-child > div:first-child > ul > li:nth-child(2) > span'
-      );
-      if (dateElement) {
-        precedentInfo.registrationDate = dateElement.textContent.trim();
-        console.log('[Capture] Date:', precedentInfo.registrationDate);
-      }
-      
+
       // 4. 제목 추출
       // 구조: div > div > a > strong
+      console.log('[Capture] Looking for title element...');
       const titleElement = closestLI.querySelector(
         'div:first-child > div:first-child > a > strong'
       );
+      console.log('[Capture] titleElement found:', !!titleElement);
       if (titleElement) {
         precedentInfo.title = titleElement.textContent.trim();
-        console.log('[Capture] Title:', precedentInfo.title.substring(0, 50) + '...');
+        console.log('[Capture] Title extracted:', precedentInfo.title.substring(0, 50) + '...');
+      } else {
+        console.log('[Capture] Failed to find title element');
       }
       
       // 5. 추가 정보 수집
@@ -87,12 +117,13 @@
     
     // 디버깅 출력
     if (precedentInfo.hasData) {
-      console.log('[Capture] Captured precedent info:', {
-        rowIndex: precedentInfo.rowIndex,
-        caseNumber: precedentInfo.caseNumber,
-        date: precedentInfo.registrationDate,
-        titlePreview: precedentInfo.title ? precedentInfo.title.substring(0, 30) + '...' : null
-      });
+      console.log('[Capture] ========== 우클릭한 판례 정보 ==========');
+      console.log('[Capture] 유형:', precedentInfo.caseType || '유형 없음');
+      console.log('[Capture] 제목:', precedentInfo.title || '제목 없음');
+      console.log('[Capture] 판례번호:', precedentInfo.caseNumber || '판례번호 없음');
+      console.log('[Capture] Row Index:', precedentInfo.rowIndex);
+      console.log('[Capture] ======================================');
+      console.log('[Capture] 전체 데이터:', precedentInfo);
     }
   }, true); // capture phase에서 실행
   

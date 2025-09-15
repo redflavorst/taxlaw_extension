@@ -200,12 +200,22 @@
   
   // 패널 열기
   function openPanel(data) {
+    console.log('[Panel] openPanel called with data:', {
+      docId: data?.docId,
+      matchMethod: data?.matchMethod,
+      clickedInfo: data?.clickedInfo,
+      hasClickedInfo: !!data?.clickedInfo,
+      caseType: data?.clickedInfo?.caseType,
+      caseNumber: data?.clickedInfo?.caseNumber,
+      title: data?.clickedInfo?.title
+    });
+
     injectStyles();
     const panel = createPanel();
-    
+
     // 데이터 표시
     const contentDiv = document.getElementById('panel-content');
-    
+
     if (data && data.docId) {
       // 로딩 상태 확인
       if (data.loading) {
@@ -241,14 +251,14 @@
             <div class="info-value">${data.clickedInfo.caseNumber}</div>
           </div>
           ` : ''}
-          
-          ${data.clickedInfo && data.clickedInfo.registrationDate ? `
+
+          ${data.clickedInfo && data.clickedInfo.caseType ? `
           <div class="info-section">
-            <div class="info-label">등록일자</div>
-            <div class="info-value">${data.clickedInfo.registrationDate}</div>
+            <div class="info-label">유형</div>
+            <div class="info-value">${data.clickedInfo.caseType}</div>
           </div>
           ` : ''}
-          
+
           ${data.clickedInfo && data.clickedInfo.title ? `
           <div class="info-section">
             <div class="info-label">제목</div>
@@ -335,12 +345,214 @@
     };
     return methodTexts[method] || method;
   }
+
+  // reason 섹션을 숫자 단위로 분할하는 함수
+  function splitReasonByNumbers(reasonText) {
+    if (!reasonText) return [];
+
+    const lines = reasonText.split('\n');
+    const units = [];
+    let currentUnit = null;
+    let currentNumber = 0;
+    let expectedNextNumber = 1;  // 다음에 올 것으로 예상되는 숫자
+
+    for (const line of lines) {
+      // 숫자. 으로 시작하는 라인 찾기 (예: "1. ", "2. ", "10. " 등)
+      const match = line.match(/^(\d+)\.\s/);
+
+      if (match) {
+        const number = parseInt(match[1]);
+
+        // 순차적인 숫자인지 확인 (1 -> 2 -> 3 순서)
+        if (number === expectedNextNumber) {
+          // 이전 단위가 있으면 저장
+          if (currentUnit !== null) {
+            units.push({
+              number: currentNumber,
+              title: currentUnit.title,
+              content: currentUnit.lines.join('\n').trim()
+            });
+          }
+
+          // 새 단위 시작
+          currentNumber = number;
+          expectedNextNumber = number + 1;  // 다음 예상 숫자 업데이트
+
+          // 제목 추출 (숫자. 다음 내용)
+          const title = line.substring(match[0].length).trim();
+          currentUnit = {
+            title: title,
+            lines: []
+          };
+        } else {
+          // 순차적이지 않은 숫자는 일반 텍스트로 처리
+          if (currentUnit !== null) {
+            currentUnit.lines.push(line);
+          }
+        }
+      } else if (currentUnit !== null) {
+        // 현재 단위에 라인 추가
+        currentUnit.lines.push(line);
+      }
+    }
+
+    // 마지막 단위 저장
+    if (currentUnit !== null) {
+      units.push({
+        number: currentNumber,
+        title: currentUnit.title,
+        content: currentUnit.lines.join('\n').trim()
+      });
+    }
+
+    console.log('[Panel] Reason units found:', units.length);
+    units.forEach(unit => {
+      console.log(`[Panel] Unit ${unit.number}: ${unit.title} (${unit.content.length} chars)`);
+    });
+
+    return units;
+  }
+
+  // 판례 내용 전처리 함수
+  function preprocessContent(content, caseType) {
+    if (!content) return { formatted: content, jumun: '', reason: '', reasonUnits: [] };
+
+    let processedContent = content;
+    let jumun = '';
+    let reason = '';
+    let reasonUnits = [];
+
+    // 유형별 전처리
+    switch(caseType) {
+      case '판례':
+        // '주 문'과 '이 유' 섹션 찾기
+        const mainTextIndex = processedContent.indexOf('주 문');
+        const reasonIndex = processedContent.indexOf('이 유');
+
+        if (mainTextIndex !== -1) {
+          if (reasonIndex !== -1 && reasonIndex > mainTextIndex) {
+            // 주문 섹션: '주 문'부터 '이 유' 전까지
+            jumun = processedContent.substring(mainTextIndex, reasonIndex)
+              .replace('주 문', '')
+              .trim();
+            // 이유 섹션: '이 유'부터 끝까지
+            reason = processedContent.substring(reasonIndex)
+              .replace('이 유', '')
+              .trim();
+
+            // reason을 숫자 단위로 분할
+            reasonUnits = splitReasonByNumbers(reason);
+          } else {
+            // '이 유'가 없으면 전체를 주문으로
+            jumun = processedContent.substring(mainTextIndex)
+              .replace('주 문', '')
+              .trim();
+          }
+
+          // 섹션 구분하여 표시
+          processedContent = '';
+          if (jumun) {
+            processedContent += '【주문】\n' + jumun;
+          }
+          if (reason) {
+            // reasonUnits가 있으면 단위별로 구분선 추가
+            if (reasonUnits && reasonUnits.length > 0) {
+              processedContent += '\n\n【이유】\n';
+              reasonUnits.forEach((unit, index) => {
+                processedContent += `${unit.number}. ${unit.title}\n`;
+                processedContent += unit.content;
+                // 마지막 단위가 아니면 구분선 추가
+                if (index < reasonUnits.length - 1) {
+                  processedContent += '\n------------\n\n';
+                }
+              });
+            } else {
+              // 단위 구분이 없으면 원본 그대로
+              processedContent += '\n\n【이유】\n' + reason;
+            }
+          }
+
+          console.log('[Panel] 판례 섹션 구분:', {
+            jumunLength: jumun.length,
+            reasonLength: reason.length,
+            reasonUnits: reasonUnits.length
+          });
+        } else {
+          // '주 문'이 없으면 다른 시작 지점 찾기
+          const alternativeStarts = ['사건', '결정', '판결', '사실관계', '이유'];
+          for (const keyword of alternativeStarts) {
+            const index = processedContent.indexOf(keyword);
+            if (index !== -1 && index < 100) {  // 앞부분에 있는 경우만
+              processedContent = processedContent.substring(index);
+              break;
+            }
+          }
+        }
+        break;
+
+      case '심판':
+        // '결정' 또는 '주문' 이전 내용 제거
+        const decisionIndex = processedContent.indexOf('결정');
+        const orderIndex = processedContent.indexOf('주문');
+        const startIndex = Math.min(
+          decisionIndex > -1 ? decisionIndex : Infinity,
+          orderIndex > -1 ? orderIndex : Infinity
+        );
+        if (startIndex !== Infinity) {
+          processedContent = processedContent.substring(startIndex);
+        }
+        break;
+
+      case '이의':
+      case '적부':
+      case '심사':
+        // '결정내용' 또는 '판단' 이전 내용 제거
+        const decisionContentIndex = processedContent.indexOf('결정내용');
+        const judgmentIndex = processedContent.indexOf('판단');
+        const startPoint = Math.min(
+          decisionContentIndex > -1 ? decisionContentIndex : Infinity,
+          judgmentIndex > -1 ? judgmentIndex : Infinity
+        );
+        if (startPoint !== Infinity) {
+          processedContent = processedContent.substring(startPoint);
+        }
+        break;
+
+      default:
+        // 기타 유형은 전처리하지 않음
+        console.log('[Panel] Unknown case type:', caseType);
+        break;
+    }
+
+    // 앞뒤 공백 제거
+    processedContent = processedContent.trim();
+
+    // 연속된 줄바꿈 정리 (3개 이상의 줄바꿈을 2개로)
+    processedContent = processedContent.replace(/\n{3,}/g, '\n\n');
+
+    // 객체로 반환 (formatted: 표시용, jumun: 주문 내용, reason: 이유 내용, reasonUnits: 이유 섹션의 숫자 단위들)
+    return {
+      formatted: processedContent,
+      jumun: jumun,
+      reason: reason,
+      reasonUnits: reasonUnits
+    };
+  }
   
   // 패널 업데이트 함수
   function updatePanel(data) {
+    console.log('[Panel] updatePanel called with data:', {
+      docId: data?.docId,
+      success: data?.success,
+      detail: data?.detail,
+      caseType: data?.detail?.caseType,
+      caseNumber: data?.detail?.caseNumber,
+      title: data?.detail?.title
+    });
+
     const contentDiv = document.getElementById('panel-content');
     if (!contentDiv) return;
-    
+
     if (data.success && data.detail) {
       const detail = data.detail;
       contentDiv.innerHTML = `
@@ -349,42 +561,71 @@
           <div class="doc-id-value" id="doc-id-value">${data.docId}</div>
           <button class="copy-button" id="copy-doc-id">복사</button>
         </div>
-        
-        ${detail.caseNumber ? `
+
+        ${data.clickedInfo && data.clickedInfo.caseNumber ? `
+        <div class="info-section">
+          <div class="info-label">판례번호</div>
+          <div class="info-value">${data.clickedInfo.caseNumber}</div>
+        </div>
+        ` : detail.caseNumber ? `
         <div class="info-section">
           <div class="info-label">판례번호</div>
           <div class="info-value">${detail.caseNumber}</div>
         </div>
         ` : ''}
-        
-        ${detail.date ? `
+
+        ${data.clickedInfo && data.clickedInfo.caseType ? `
         <div class="info-section">
-          <div class="info-label">날짜</div>
-          <div class="info-value">${detail.date}</div>
+          <div class="info-label">유형</div>
+          <div class="info-value">${data.clickedInfo.caseType}</div>
+        </div>
+        ` : detail.caseType ? `
+        <div class="info-section">
+          <div class="info-label">유형</div>
+          <div class="info-value">${detail.caseType}</div>
         </div>
         ` : ''}
-        
-        ${detail.title ? `
+
+        ${data.clickedInfo && data.clickedInfo.title ? `
+        <div class="info-section">
+          <div class="info-label">제목</div>
+          <div class="info-value">${data.clickedInfo.title}</div>
+        </div>
+        ` : detail.title ? `
         <div class="info-section">
           <div class="info-label">제목</div>
           <div class="info-value">${detail.title}</div>
         </div>
         ` : ''}
-        
-        ${detail.content ? `
-        <div class="info-section">
-          <div class="info-label">판례 상세 내용</div>
-          <div class="detail-content">
-            <pre>${detail.content}</pre>
+
+        ${detail.content ? (() => {
+          const processed = preprocessContent(detail.content, data.clickedInfo?.caseType || detail.caseType);
+          // 나중에 jumun, reason, reasonUnits를 별도로 사용 가능
+          window.__lastProcessedContent = {
+            jumun: processed.jumun,
+            reason: processed.reason,
+            reasonUnits: processed.reasonUnits
+          };
+          console.log('[Panel] Processed content saved:', {
+            jumunLength: processed.jumun.length,
+            reasonLength: processed.reason.length,
+            reasonUnitsCount: processed.reasonUnits.length
+          });
+          return `
+          <div class="info-section">
+            <div class="info-label">판례 상세 내용</div>
+            <div class="detail-content">
+              <pre>${processed.formatted}</pre>
+            </div>
           </div>
-        </div>
-        ` : ''}
-        
+          `;
+        })() : ''}
+
         <div class="success">
           판례 상세 내용을 성공적으로 불러왔습니다.
         </div>
       `;
-      
+
       // 복사 버튼 이벤트 재설정
       const copyBtn = document.getElementById('copy-doc-id');
       if (copyBtn) {
@@ -398,7 +639,7 @@
           <div class="doc-id-label">DOC_ID</div>
           <div class="doc-id-value">${data.docId}</div>
         </div>
-        
+
         <div class="error">
           판례 상세 내용을 불러올 수 없습니다.
           ${data.error ? `<br>오류: ${data.error}` : ''}

@@ -83,6 +83,7 @@
     const result = {
       title: null,
       caseNumber: null,
+      caseType: null,
       date: null,
       content: null,
       summary: null,
@@ -182,12 +183,37 @@
         }
       }
       
-      // 제목 추출 시도
-      const titleElement = doc.querySelector('.title, h1, h2, [class*="title"]');
-      if (titleElement) {
+      // 제목 추출 시도 - strong 태그 내의 제목
+      const titleElement = doc.querySelector('strong');
+      if (!titleElement) {
+        const titleFallback = doc.querySelector('.title, h1, h2, [class*="title"]');
+        if (titleFallback) {
+          result.title = titleFallback.textContent.trim();
+        }
+      } else {
         result.title = titleElement.textContent.trim();
       }
-      
+
+      // 판례 유형 추출 시도 - li[1] 요소
+      const caseTypeElement = doc.querySelector('ul li:first-child');
+      if (!caseTypeElement) {
+        // XPath로 더 정확히 시도
+        const xpath = '//*[@id="bdltCtl"]/li/div[1]/div[1]/a/ul/li[1]';
+        const xpathResult = doc.evaluate(
+          xpath,
+          doc,
+          null,
+          XPathResult.FIRST_ORDERED_NODE_TYPE,
+          null
+        );
+        const xpathElement = xpathResult.singleNodeValue;
+        if (xpathElement) {
+          result.caseType = xpathElement.textContent.trim();
+        }
+      } else {
+        result.caseType = caseTypeElement.textContent.trim();
+      }
+
       // 판례번호 추출 시도
       const caseNumberPattern = /조심-\d{4}-[가-힣]+-\d+|국심-\d{4}-\d+|대법원\s*\d{4}[가-힣]+\d+/;
       const bodyText = doc.body ? doc.body.textContent : '';
@@ -195,7 +221,7 @@
       if (caseMatch) {
         result.caseNumber = caseMatch[0];
       }
-      
+
       // 날짜 추출 시도
       const datePattern = /\d{4}\.\d{2}\.\d{2}/;
       const dateMatch = bodyText.match(datePattern);
