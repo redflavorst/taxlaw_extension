@@ -160,6 +160,37 @@
       font-size: 14px;
       line-height: 1.5;
     }
+
+    #tax-law-side-panel .llm-button {
+      background: #28a745;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 10px 0;
+      width: 100%;
+    }
+
+    #tax-law-side-panel .llm-button:hover {
+      background: #218838;
+    }
+
+    #tax-law-side-panel .llm-button:disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+    }
+
+    #tax-law-side-panel .llm-result {
+      background: #f0f8ff;
+      border: 1px solid #b0d4ff;
+      border-radius: 4px;
+      padding: 15px;
+      margin-top: 15px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
   `;
   
   // 스타일 삽입
@@ -346,6 +377,168 @@
     return methodTexts[method] || method;
   }
 
+  // LLM 요약 처리 함수
+  async function handleLLMSummarize() {
+    console.log('[Panel] LLM summarize requested');
+
+    const btn = document.getElementById('llm-summarize-btn');
+    const resultContainer = document.getElementById('llm-result-container');
+
+    if (!window.__lastProcessedContent) {
+      resultContainer.innerHTML = `
+        <div class="error">처리된 판례 내용이 없습니다.</div>
+      `;
+      return;
+    }
+
+    // 버튼 비활성화
+    btn.disabled = true;
+    btn.textContent = '⏳ AI가 분석 중...';
+
+    // 로딩 표시
+    resultContainer.innerHTML = `
+      <div class="loading">AI가 판례를 분석하고 있습니다...</div>
+    `;
+
+    try {
+      // LLM API 호출을 위한 메시지 전송
+      const response = await callLLMAPI(window.__lastProcessedContent);
+
+      if (response.success) {
+        // 성공 시 결과 표시
+        resultContainer.innerHTML = `
+          <div class="llm-result">
+            <h4>📋 AI 요약 결과</h4>
+            <pre>${response.result}</pre>
+          </div>
+        `;
+      } else {
+        // 실패 시 에러 표시
+        resultContainer.innerHTML = `
+          <div class="error">
+            AI 요약 실패: ${response.error || '알 수 없는 오류'}
+          </div>
+        `;
+      }
+    } catch (error) {
+      console.error('[Panel] LLM error:', error);
+      resultContainer.innerHTML = `
+        <div class="error">
+          AI 요약 중 오류가 발생했습니다.
+        </div>
+      `;
+    } finally {
+      // 버튼 재활성화
+      btn.disabled = false;
+      btn.textContent = '🤖 AI로 판례 요약하기';
+    }
+  }
+
+  // LLM API 호출 함수 (background script 경유)
+  async function callLLMAPI(processedContent) {
+    console.log('[Panel] Calling LLM with content:', {
+      jumunLength: processedContent.jumun?.length,
+      reasonUnitsCount: processedContent.reasonUnits?.length
+    });
+
+    // 프롬프트 생성 (api.js의 프롬프트 템플릿 사용)
+    const systemPrompt = `너는 판결문 요약 보조자다. 아래 규칙을 지켜라.
+
+[문단 인식 규칙]
+- 머리표시(1., 2., 가., 나., 1), 2), 가), 나))는 '제목행'으로 분류한다.
+- 제목행은 바로 뒤 본문과 결합해 하나의 문단으로 간주한다(단독이면 스코어 0).
+- '주문/청구취지/항소취지/이유/판단/결론' 같은 섹션 제목은 앵커로만 사용, 스코어링 제외.
+- 한 줄짜리라도 금액·일시·등기·송금·결론 연결어가 포함된 완결 문장이면 본문으로 인정.
+- 본문 내 가)나)다) 열거는 하위 서브문단으로 인식해 각각 1문장 요약 후 합친다.
+
+[중요도 선별 규칙]
+1) 문단들에 내부적으로 중요도 점수(0~5)를 매겨 상위 K개만 사용한다(K=7를 기본으로, 필요시 6~8 조정).
+   - 가중치+: 금액·일시·등기·송금, 결론 연결어(따라서/그러나/결국/… 판단한다), 항변 인용/배척, 조문·판례 번호
+   - 가중치-: 원론적 법리 서설, 증거목록/호증 나열
+2) 상위 문단만 근거로 OUTPUT을 작성한다.
+3) 숫자·날짜·법적 효과(피보전채권/증여/사해/선의 항변 배척 등)는 반드시 남긴다.
+4) 한국어로, 불필요한 수식어 금지. 분량 제한을 엄수한다.
+5) '주문'은 요약의 앵커로 삼되 스코어링에는 포함하지 않는다.`;
+
+    // 이유 섹션 내용 준비
+    let reasonContent = '';
+    if (processedContent.reasonUnits && processedContent.reasonUnits.length > 0) {
+      reasonContent = processedContent.reasonUnits
+        .map(unit => `${unit.number}. ${unit.title}\n${unit.content}`)
+        .join('\n\n');
+    } else if (processedContent.reason) {
+      reasonContent = processedContent.reason;
+    }
+
+    const userPrompt = `[사용자 입력]
+판례 정보:
+- 유형: ${processedContent.caseType || '판례'}
+- 제목: ${processedContent.title || ''}
+- 판례번호: ${processedContent.caseNumber || ''}
+
+주문:
+${processedContent.jumun || ''}
+
+요약이 필요한 부분:
+${reasonContent}
+
+[OUTPUT 형식(그대로 지켜서 출력)]
+1) 이 사건 간단 압축 요약(3문장)
+- (문장1) 70~110자
+- (문장2) 70~110자
+- (문장3) 70~110자
+
+2) 구조화 요약(보고서용 표준형)
+- 쟁점: 2~3개 불릿
+- 주요 사실: 3~5개 불릿(금액/일시/행위 위주)
+- 법리 요지: 3~4개 불릿(조문·판례는 번호만)
+- 구체 판단: 3~5개 불릿(항변 인용/배척 포함)
+- 결론/주문: 2~3개 불릿(이자율·기산점 포함)
+제한: 전체 600~800자`;
+
+    // background script로 메시지 전송
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({
+        topic: 'llm:call',
+        payload: {
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          model: 'gpt-4o-mini',
+          temperature: 0.2,
+          max_tokens: 2000,
+          stream: false
+        }
+      }, (response) => {
+        // Chrome runtime 에러 체크
+        if (chrome.runtime.lastError) {
+          console.error('[Panel] Chrome runtime error:', chrome.runtime.lastError);
+          resolve({
+            success: false,
+            error: 'Extension error: ' + chrome.runtime.lastError.message
+          });
+          return;
+        }
+
+        console.log('[Panel] LLM response:', response);
+
+        if (response && response.ok) {
+          resolve({
+            success: true,
+            result: response.text,
+            usage: response.usage
+          });
+        } else {
+          resolve({
+            success: false,
+            error: response?.error || 'API 호출 실패'
+          });
+        }
+      });
+    });
+  }
+
   // reason 섹션을 숫자 단위로 분할하는 함수
   function splitReasonByNumbers(reasonText) {
     if (!reasonText) return [];
@@ -475,19 +668,9 @@
           console.log('[Panel] 판례 섹션 구분:', {
             jumunLength: jumun.length,
             reasonLength: reason.length,
-            reasonUnits: reasonUnits.length
+            reasonUnitsCount: reasonUnits.length
           });
-        } else {
-          // '주 문'이 없으면 다른 시작 지점 찾기
-          const alternativeStarts = ['사건', '결정', '판결', '사실관계', '이유'];
-          for (const keyword of alternativeStarts) {
-            const index = processedContent.indexOf(keyword);
-            if (index !== -1 && index < 100) {  // 앞부분에 있는 경우만
-              processedContent = processedContent.substring(index);
-              break;
-            }
-          }
-        }
+        } 
         break;
 
       case '심판':
@@ -617,6 +800,10 @@
             <div class="detail-content">
               <pre>${processed.formatted}</pre>
             </div>
+            <button class="llm-button" id="llm-summarize-btn">
+              🤖 AI로 판례 요약하기
+            </button>
+            <div id="llm-result-container"></div>
           </div>
           `;
         })() : ''}
@@ -631,6 +818,14 @@
       if (copyBtn) {
         copyBtn.addEventListener('click', function() {
           copyToClipboard(data.docId, copyBtn);
+        });
+      }
+
+      // LLM 요약 버튼 이벤트 설정
+      const llmBtn = document.getElementById('llm-summarize-btn');
+      if (llmBtn) {
+        llmBtn.addEventListener('click', function() {
+          handleLLMSummarize();
         });
       }
     } else {

@@ -1,13 +1,60 @@
-// Background Service Worker - 컨텍스트 메뉴 관리
+// Background Service Worker - 컨텍스트 메뉴 관리 및 OpenAI API
 
-// 컨텍스트 메뉴 생성
+// OpenAI API 키 저장 변수
+let OPENAI_API_KEY = null;
+
+// API 키 로드 함수 (분리된 경로)
+async function loadApiKey() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['OPENAI_API_KEY'], (res) => {
+      OPENAI_API_KEY = res.OPENAI_API_KEY || null;
+      console.log('[Background] API key loaded:', !!OPENAI_API_KEY);
+      resolve(OPENAI_API_KEY);
+    });
+  });
+}
+
+// API 키 저장 함수 (분리된 경로)
+async function saveApiKey(apiKey) {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.set({ OPENAI_API_KEY: apiKey }, () => {
+      if (chrome.runtime.lastError) {
+        console.error('[Background] Error saving API key:', chrome.runtime.lastError);
+        reject(chrome.runtime.lastError);
+      } else {
+        OPENAI_API_KEY = apiKey;
+        console.log('[Background] API key saved successfully');
+        resolve();
+      }
+    });
+  });
+}
+
+// 확장 프로그램 설치/업데이트 시 실행
 chrome.runtime.onInstalled.addListener(() => {
+  // 컨텍스트 메뉴 생성
   chrome.contextMenus.create({
     id: "summarizePrecedent",
     title: "요약하기",
     contexts: ["all"],
     documentUrlPatterns: ["https://taxlaw.nts.go.kr/*"]
   });
+
+  // 저장된 API 키 로드
+  loadApiKey();
+});
+
+// 확장 프로그램 시작 시 API 키 로드
+chrome.runtime.onStartup.addListener(() => {
+  loadApiKey();
+});
+
+// API 키 변경 감지
+chrome.storage.onChanged.addListener((changes) => {
+  if (changes.OPENAI_API_KEY) {
+    OPENAI_API_KEY = changes.OPENAI_API_KEY.newValue;
+    console.log('[Background] API key updated:', !!OPENAI_API_KEY);
+  }
 });
 
 // 컨텍스트 메뉴 클릭 이벤트 처리
@@ -33,6 +80,105 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 chrome.action.onClicked.addListener((tab) => {
   console.log('[Background] Extension icon clicked');
 });
+
+// OpenAI API 호출 함수
+async function callOpenAI({ messages, model = 'gpt-4o-mini', temperature = 0.2, max_tokens = 2000, stream = false, timeout = 30000 }) {
+  // API 키가 없으면 로드 시도
+  if (!OPENAI_API_KEY) {
+    console.log('[Background] API key not in memory, loading from storage...');
+    await loadApiKey();
+
+    // 여전히 없으면 에러
+    if (!OPENAI_API_KEY) {
+      throw new Error('API 키가 설정되지 않았습니다. 확장 프로그램 설정에서 OpenAI API 키를 입력해주세요.');
+    }
+  }
+
+  const body = {
+    model,
+    messages,
+    temperature,
+    max_tokens,
+    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {})
+  };
+
+  const controller = new AbortController();
+
+  // 타임아웃 설정 (기본 30초)
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+    console.log('[Background] Request timeout after', timeout, 'ms');
+  }, timeout);
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        throw new Error(`Rate limited${retryAfter ? `, retry after ${retryAfter}s` : ''}`);
+      }
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`OpenAI API 실패 (${response.status}): ${errorData.error?.message || response.statusText}`);
+    }
+
+    if (stream) {
+      // 스트리밍 처리 (필요시 구현)
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let done, buffer = '';
+
+      while (!( { done, value } = await reader.read()).done) {
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') return;
+
+          try {
+            const json = JSON.parse(payload);
+            // 스트림 청크를 content script로 전달
+            chrome.runtime.sendMessage({
+              topic: 'llm:chunk',
+              chunk: json
+            });
+          } catch (e) {
+            console.error('[Background] Stream parse error:', e);
+          }
+        }
+      }
+      return;
+    } else {
+      const data = await response.json();
+      clearTimeout(timeoutId); // 성공시 타임아웃 클리어
+      return {
+        text: data.choices?.[0]?.message?.content ?? '',
+        usage: data.usage
+      };
+    }
+  } catch (error) {
+    clearTimeout(timeoutId); // 에러시에도 타임아웃 클리어
+
+    // AbortError인 경우 타임아웃 에러로 처리
+    if (error.name === 'AbortError') {
+      throw new Error(`요청 시간 초과 (${timeout/1000}초)`);
+    }
+
+    console.error('[Background] OpenAI API error:', error);
+    throw error;
+  }
+}
 
 // 판례 상세 페이지 가져오기 함수 (새 탭 방식)
 async function fetchPrecedentDetailViaTab(docId, senderId) {
@@ -536,8 +682,67 @@ function extractContentFromHTML(html) {
 
 // 메시지 리스너 (Content script와의 통신)
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  console.log('[Background] Received message:', request.type);
-  
+  console.log('[Background] Received message:', request.type || request.topic);
+
+  // 새로운 메시지 형식 처리 (topic 기반)
+  if (request.topic === 'llm:call') {
+    console.log('[Background] LLM call requested');
+
+    callOpenAI(request.payload).then(
+      (result) => {
+        console.log('[Background] LLM call success');
+        sendResponse({ ok: true, ...result });
+      },
+      (error) => {
+        console.error('[Background] LLM call error:', error);
+        sendResponse({ ok: false, error: error.message });
+      }
+    );
+    return true; // 비동기 응답
+  }
+
+  // API 키 설정 요청
+  if (request.topic === 'llm:setApiKey') {
+    console.log('[Background] Setting API key');
+    saveApiKey(request.apiKey).then(
+      () => {
+        sendResponse({ ok: true });
+      },
+      (error) => {
+        sendResponse({ ok: false, error: error.message });
+      }
+    );
+    return true; // 비동기 응답
+  }
+
+  // API 키 확인 요청
+  if (request.topic === 'llm:checkApiKey') {
+    // API 키가 없으면 재로드 시도
+    if (!OPENAI_API_KEY) {
+      loadApiKey().then((key) => {
+        sendResponse({ ok: true, hasKey: !!key });
+      });
+      return true; // 비동기 응답
+    } else {
+      sendResponse({ ok: true, hasKey: true });
+      return false; // 동기 응답
+    }
+  }
+
+  // API 키 가져오기 요청
+  if (request.topic === 'llm:getApiKey') {
+    if (!OPENAI_API_KEY) {
+      loadApiKey().then((key) => {
+        sendResponse({ ok: true, apiKey: key });
+      });
+      return true; // 비동기 응답
+    } else {
+      sendResponse({ ok: true, apiKey: OPENAI_API_KEY });
+      return false; // 동기 응답
+    }
+  }
+
+  // 기존 메시지 형식 처리 (type 기반)
   switch(request.type) {
     case 'MSG_GET_TAB_INFO':
       sendResponse({
@@ -545,12 +750,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         url: sender.tab.url
       });
       break;
-      
+
     case 'MSG_LOG':
       console.log('[Background Log]', request.data);
       sendResponse({ success: true });
       break;
-      
+
     case 'MSG_FETCH_DETAIL':
       // 새 탭 방식 시도
       fetchPrecedentDetailViaTab(request.docId, sender.tab.id).then(result => {
@@ -563,10 +768,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
       });
       return true; // 비동기 응답을 위해 true 반환
-      
+
     default:
       sendResponse({ success: false, error: 'Unknown message type' });
   }
-  
+
   return false; // 동기적 응답
 });

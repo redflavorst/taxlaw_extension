@@ -4,7 +4,11 @@
   "version": "1.0.0",
   "description": "국세법령정보시스템 판례 요약 도우미",
   "permissions": ["contextMenus", "activeTab", "storage", "scripting", "tabs"],
-  "host_permissions": ["https://taxlaw.nts.go.kr/*"],
+  "host_permissions": [
+    "https://taxlaw.nts.go.kr/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*"
+  ],
   "background": {
     "service_worker": "background/menus.js"
   },
@@ -14,6 +18,7 @@
       "js": [
         "lib/network-id.js",
         "lib/docid-utils.js",
+        "llm/api.js",
         "content/capture.js",
         "content/bridge.js",
         "content/panel.view.js"
