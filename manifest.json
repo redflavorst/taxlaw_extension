@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tax Law Extension",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "국세법령정보시스템 판례 요약 도우미",
   "permissions": ["contextMenus", "activeTab", "storage", "scripting", "tabs"],
   "host_permissions": [

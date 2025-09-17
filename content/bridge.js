@@ -29,6 +29,15 @@
             chrome.runtime.sendMessage({
               type: 'MSG_LOG',
               data: `Precedent list updated: ${savedPrecedentList.length} items`
+            }, () => {
+              // Chrome runtime 에러 체크 (더 안전한 방법)
+              if (chrome.runtime.lastError) {
+                // Extension이 재로드되었을 때 발생하는 에러만 무시
+                if (!chrome.runtime.lastError.message.includes('Extension context invalidated') &&
+                    !chrome.runtime.lastError.message.includes('Receiving end does not exist')) {
+                  console.error('[Bridge] Runtime error:', chrome.runtime.lastError);
+                }
+              }
             });
           } catch (error) {
             // Extension이 재로드되었을 때 발생하는 에러 무시

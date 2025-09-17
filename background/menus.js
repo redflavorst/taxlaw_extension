@@ -1,7 +1,8 @@
 // Background Service Worker - 컨텍스트 메뉴 관리 및 OpenAI API
 
 // OpenAI API 키 저장 변수
-let OPENAI_API_KEY = null;  // 테스트 시: 'sk-...' 직접 입력 가능
+let OPENAI_API_KEY = null;  
+// 테스트 시: 'sk-...' 직접 입력 가능
 
 // API 키 로드 함수 (분리된 경로)
 async function loadApiKey() {
@@ -74,14 +75,51 @@ chrome.storage.onChanged.addListener((changes) => {
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === "summarizePrecedent") {
     console.log('[Background] Context menu clicked');
-    
-    // Content script에 ARM (Activate Right-click Menu) 신호 전송
+
+    // First, check if content scripts are already injected
     chrome.tabs.sendMessage(tab.id, {
       type: 'MSG_ARM_CAPTURE',
       timestamp: Date.now()
     }, (response) => {
       if (chrome.runtime.lastError) {
-        console.error('[Background] Error sending message:', chrome.runtime.lastError);
+        // Content script가 아직 로드되지 않은 경우
+        if (chrome.runtime.lastError.message.includes('Receiving end does not exist')) {
+          console.log('[Background] Content script not ready, injecting...');
+
+          // Content scripts 주입
+          chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: [
+              'lib/network-id.js',
+              'lib/docid-utils.js',
+              'llm/api.js',
+              'content/capture.js',
+              'content/bridge.js',
+              'content/panel.view.js'
+            ]
+          }, () => {
+            if (chrome.runtime.lastError) {
+              console.error('[Background] Failed to inject content scripts:', chrome.runtime.lastError);
+              return;
+            }
+
+            // 스크립트 주입 후 잠시 대기 후 재시도
+            setTimeout(() => {
+              chrome.tabs.sendMessage(tab.id, {
+                type: 'MSG_ARM_CAPTURE',
+                timestamp: Date.now()
+              }, (retryResponse) => {
+                if (chrome.runtime.lastError) {
+                  console.error('[Background] Still failed after injection:', chrome.runtime.lastError);
+                } else {
+                  console.log('[Background] Success after injection:', retryResponse);
+                }
+              });
+            }, 500);
+          });
+        } else {
+          console.error('[Background] Unexpected error:', chrome.runtime.lastError);
+        }
       } else {
         console.log('[Background] Response from content script:', response);
       }
@@ -96,6 +134,27 @@ chrome.action.onClicked.addListener((tab) => {
 
 // OpenAI API 호출 함수
 async function callOpenAI({ messages, model = 'gpt-4o-mini', temperature = 0.2, max_tokens = 2000, stream = false, timeout = 30000, reqId = null }) {
+  // 실제로 받은 프롬프트 로깅
+  console.log('[Background] OpenAI API Call Details:');
+  console.log('- Model:', model);
+  console.log('- Temperature:', temperature);
+  console.log('- Max tokens:', max_tokens);
+  console.log('- Messages count:', messages ? messages.length : 0);
+  if (messages && messages.length > 0) {
+    messages.forEach((msg, idx) => {
+      if (msg.role === 'system') {
+        // 시스템 프롬프트는 전체 출력 (중요!)
+        console.log(`===== Message ${idx} [SYSTEM] FULL CONTENT START =====`);
+        console.log(msg.content);  // 별도 줄로 출력하면 잘리지 않음
+        console.log(`===== Message ${idx} [SYSTEM] FULL CONTENT END =====`);
+        console.log(`System prompt length: ${msg.content.length} characters`);
+      } else {
+        // 사용자 메시지는 일부만
+        console.log(`- Message ${idx} [${msg.role}]:`, msg.content.substring(0, 500) + '...');
+      }
+    });
+  }
+
   // API 키가 없으면 로드 시도
   if (!OPENAI_API_KEY) {
     console.log('[Background] API key not in memory, loading from storage...');

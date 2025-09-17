@@ -188,8 +188,156 @@
       border-radius: 4px;
       padding: 15px;
       margin-top: 15px;
-      max-height: 300px;
+      max-height: 500px;
       overflow-y: auto;
+      position: relative;
+    }
+
+    #tax-law-side-panel .llm-result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #b0d4ff;
+      position: sticky;
+      top: 0;
+      background: #f0f8ff;
+      z-index: 1;
+    }
+
+    #tax-law-side-panel .llm-result-title {
+      font-size: 16px;
+      font-weight: bold;
+      color: #333;
+      margin: 0;
+    }
+
+    #tax-law-side-panel .llm-copy-btn {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: background 0.3s;
+    }
+
+    #tax-law-side-panel .llm-copy-btn:hover {
+      background: #0056b3;
+    }
+
+    #tax-law-side-panel .llm-copy-btn.copied {
+      background: #28a745;
+    }
+
+    #tax-law-side-panel .llm-content-section {
+      margin-bottom: 20px;
+    }
+
+    #tax-law-side-panel .llm-section-title {
+      font-weight: bold;
+      color: #0066cc;
+      margin-bottom: 10px;
+      font-size: 15px;  /* 섹션 제목은 조금 더 크게 */
+    }
+
+    #tax-law-side-panel .llm-section-content {
+      background: white;
+      padding: 10px;
+      border-left: 3px solid #0066cc;
+      border-radius: 3px;
+      line-height: 1.6;
+      font-size: 14px;  /* 텍스트 크기 추가 */
+    }
+
+    #tax-law-side-panel .llm-section-content p {
+      font-size: 14px;  /* 단락 텍스트 크기 */
+      margin: 8px 0;
+    }
+
+    #tax-law-side-panel .llm-bullet-list {
+      margin: 5px 0;
+      padding-left: 20px;
+      font-size: 14px;  /* 리스트 텍스트 크기 */
+    }
+
+    #tax-law-side-panel .llm-bullet-list li {
+      margin: 8px 0;  /* 간격 조정 */
+      color: #444;
+      font-size: 14px;  /* 리스트 항목 텍스트 크기 */
+      line-height: 1.5;  /* 줄 간격 */
+    }
+
+    #tax-law-side-panel .llm-result::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    #tax-law-side-panel .llm-result::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+
+    #tax-law-side-panel .llm-result::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 4px;
+    }
+
+    #tax-law-side-panel .llm-result::-webkit-scrollbar-thumb:hover {
+      background: #555;
+    }
+
+    #tax-law-side-panel .detail-toggle-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px;
+      background: #f5f5f5;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-bottom: 10px;
+      transition: background 0.3s;
+    }
+
+    #tax-law-side-panel .detail-toggle-header:hover {
+      background: #e9e9e9;
+    }
+
+    #tax-law-side-panel .detail-toggle-title {
+      font-weight: bold;
+      color: #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #tax-law-side-panel .toggle-arrow {
+      transition: transform 0.3s;
+      font-size: 12px;
+    }
+
+    #tax-law-side-panel .toggle-arrow.collapsed {
+      transform: rotate(-90deg);
+    }
+
+    #tax-law-side-panel .detail-content-wrapper {
+      max-height: 400px;
+      overflow-y: auto;
+      transition: max-height 0.3s ease-out;
+      margin-bottom: 15px;
+    }
+
+    #tax-law-side-panel .detail-content-wrapper.collapsed {
+      max-height: 0;
+      overflow: hidden;
+      margin-bottom: 0;
+    }
+
+    #tax-law-side-panel .section-divider {
+      border-top: 2px solid #e0e0e0;
+      margin: 20px 0;
     }
   `;
   
@@ -377,6 +525,205 @@
     return methodTexts[method] || method;
   }
 
+  // 이모지 제거 함수
+  function stripEmojis(str) {
+    return str.replace(/[\p{Emoji_Presentation}\p{Emoji}\uFE0F]/gu, '');
+  }
+
+  // 라인 정규화 함수 (이모지, 숫자 머리글, 마크다운 헤더 제거)
+  function normalizeLine(str) {
+    return stripEmojis(str)
+      .trim()
+      .replace(/^\d+\)\s*/, '')  // 1), 2) 등 제거
+      .replace(/^#*\s*/, '')      // # 마크다운 헤더 제거
+      .replace(/^[●○▪▫◆◇]\s*/, '') // 특수 불릿 제거
+      .trim();
+  }
+
+  // LLM 결과 포맷팅 함수 (관용적 파싱)
+  function formatLLMResult(text) {
+    const sections = {};
+    let currentSection = null;
+
+    const lines = text.split('\n');
+
+    const startSection = (key) => {
+      currentSection = key;
+      if (!sections[currentSection]) {
+        sections[currentSection] = [];
+      }
+    };
+
+    for (const rawLine of lines) {
+      const line = normalizeLine(rawLine);
+      if (!line) continue;
+
+      // 섹션 헤더 감지 (관용적)
+      if (line.includes('이 사건 간단 압축 요약') ||
+          line.match(/^간단.*요약/i) ||
+          line.match(/^요약$/i)) {
+        startSection('summary');
+        continue;
+      }
+
+      if (line.includes('구조화 요약')) {
+        startSection('structured');
+        continue;
+      }
+
+      if (/^쟁점:?$/.test(line) ||
+          line.startsWith('쟁점') ||
+          line.match(/^issues?:?$/i)) {
+        startSection('issues');
+        continue;
+      }
+
+      if (/^주요\s*사실:?$/.test(line) ||
+          line.startsWith('주요 사실') ||
+          line.startsWith('주요사실') ||
+          line.match(/^facts?:?$/i)) {
+        startSection('facts');
+        continue;
+      }
+
+      if (/^법리\s*요지:?$/.test(line) ||
+          line.startsWith('법리 요지') ||
+          line.startsWith('법리요지') ||
+          line.match(/^legal.*:?$/i)) {
+        startSection('legal');
+        continue;
+      }
+
+      if (/^구체\s*판단:?$/.test(line) ||
+          line.startsWith('구체 판단') ||
+          line.startsWith('구체판단') ||
+          line.match(/^judg(e)?ment:?$/i)) {
+        startSection('judgment');
+        continue;
+      }
+
+      if (/^결론\/주문:?$/.test(line) ||
+          line.startsWith('결론/주문') ||
+          line.startsWith('결론') ||
+          line.match(/^conclusion:?$/i)) {
+        startSection('conclusion');
+        continue;
+      }
+
+      if (/^반론\/배척\s*사유:?$/.test(line) ||
+          line.startsWith('반론/배척') ||
+          line.startsWith('반론')) {
+        startSection('rebuttal');
+        continue;
+      }
+
+      // 내용 수집
+      if (currentSection) {
+        const trimmedLine = rawLine.trim();
+
+        // 다양한 불릿 형식 처리
+        if (trimmedLine.startsWith('- ')) {
+          sections[currentSection].push(trimmedLine.substring(2).trim());
+        } else if (trimmedLine.startsWith('• ') || trimmedLine.startsWith('· ')) {
+          sections[currentSection].push(trimmedLine.substring(2).trim());
+        } else if (trimmedLine.match(/^\(.*?\)/)) {
+          // (문장1), (첫 번째) 등 형식
+          sections[currentSection].push(trimmedLine);
+        } else if (trimmedLine.match(/^\d+\./)) {
+          // 1. 2. 등 숫자 불릿
+          sections[currentSection].push(trimmedLine.replace(/^\d+\.\s*/, ''));
+        } else if (!line.includes(':') || currentSection === 'summary') {
+          // 라벨이 아닌 일반 문장
+          sections[currentSection].push(trimmedLine);
+        }
+      }
+    }
+
+    return sections;
+  }
+
+  // 섹션별 이모지 매핑
+  const SECTION_ICONS = {
+    summary: '📝',
+    structured: '📋',
+    issues: '🧭',
+    facts: '🧾',
+    legal: '⚖️',
+    judgment: '🔎',
+    conclusion: '✅',
+    rebuttal: '🗣️'
+  };
+
+  // 섹션별 한글 제목 매핑
+  const SECTION_TITLES = {
+    summary: '이 사건 간단 압축 요약',
+    structured: '구조화 요약',
+    issues: '쟁점',
+    facts: '주요 사실',
+    legal: '법리 요지',
+    judgment: '구체 판단',
+    conclusion: '결론/주문',
+    rebuttal: '반론/배척 사유'
+  };
+
+  // 이모지 사용 여부 (나중에 설정으로 제어 가능)
+  let USE_EMOJIS = true;
+
+  // HTML 이스케이프 함수 (XSS 방지)
+  function escapeHTML(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // 섹션 헤더 생성 함수
+  function createSectionHeader(key) {
+    const title = SECTION_TITLES[key] || key;
+    const icon = USE_EMOJIS ? (SECTION_ICONS[key] || '') : '';
+    return icon ? `${icon} ${title}` : title;
+  }
+
+  // 포맷된 결과를 HTML로 변환 (개선된 버전)
+  function formatResultToHTML(sections) {
+    let html = '<div class="llm-result-content">';
+
+    // 섹션 렌더링 순서
+    const renderOrder = ['summary', 'issues', 'facts', 'legal', 'judgment', 'conclusion', 'rebuttal'];
+
+    for (const key of renderOrder) {
+      if (!sections[key] || sections[key].length === 0) continue;
+
+      const sectionTitle = createSectionHeader(key);
+      const items = sections[key];
+
+      html += '<div class="llm-content-section">';
+      html += `<div class="llm-section-title">${escapeHTML(sectionTitle)}</div>`;
+      html += '<div class="llm-section-content">';
+
+      // 모든 섹션을 불릿 포인트로 표시
+      html += '<ul class="llm-bullet-list">';
+      html += items.map(item => `<li>${escapeHTML(item)}</li>`).join('');
+      html += '</ul>';
+
+      html += '</div></div>';
+    }
+
+    // 섹션이 하나도 없는 경우
+    if (Object.keys(sections).length === 0) {
+      html += `
+        <div class="llm-content-section">
+          <div class="llm-section-title">⚠️ 파싱 오류</div>
+          <div class="llm-section-content">
+            <p>응답 형식이 표준과 다릅니다. 다시 시도해주세요.</p>
+          </div>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    return html;
+  }
+
   // LLM 요약 처리 함수
   async function handleLLMSummarize() {
     console.log('[Panel] LLM summarize requested');
@@ -405,13 +752,28 @@
       const response = await callLLMAPI(window.__lastProcessedContent);
 
       if (response.success) {
+        // 결과 포맷팅
+        const formattedSections = formatLLMResult(response.result);
+        const formattedHTML = formatResultToHTML(formattedSections);
+
         // 성공 시 결과 표시
         resultContainer.innerHTML = `
           <div class="llm-result">
-            <h4>📋 AI 요약 결과</h4>
-            <pre>${response.result}</pre>
+            <div class="llm-result-header">
+              <h4 class="llm-result-title">📋 AI 요약 결과</h4>
+              <button class="llm-copy-btn" id="llm-copy-btn">📄 복사</button>
+            </div>
+            ${formattedHTML}
           </div>
         `;
+
+        // 복사 버튼 이벤트 설정
+        const copyBtn = document.getElementById('llm-copy-btn');
+        if (copyBtn) {
+          copyBtn.addEventListener('click', function() {
+            copyToClipboard(response.result, copyBtn);
+          });
+        }
       } else {
         // 실패 시 에러 표시
         resultContainer.innerHTML = `
@@ -434,119 +796,36 @@
     }
   }
 
-  // LLM API 호출 함수 (background script 경유)
+  // LLM API 호출 함수 (api.js의 LLMApi 사용)
   async function callLLMAPI(processedContent) {
     console.log('[Panel] Calling LLM with content:', {
       jumunLength: processedContent.jumun?.length,
       reasonUnitsCount: processedContent.reasonUnits?.length
     });
 
-    // 프롬프트 생성 (api.js의 프롬프트 템플릿 사용)
-    const systemPrompt = `너는 판결문 요약 보조자다. 아래 규칙을 지켜라.
-
-[문단 인식 규칙]
-- 머리표시(1., 2., 가., 나., 1), 2), 가), 나))는 '제목행'으로 분류한다.
-- 제목행은 바로 뒤 본문과 결합해 하나의 문단으로 간주한다(단독이면 스코어 0).
-- '주문/청구취지/항소취지/이유/판단/결론' 같은 섹션 제목은 앵커로만 사용, 스코어링 제외.
-- 한 줄짜리라도 금액·일시·등기·송금·결론 연결어가 포함된 완결 문장이면 본문으로 인정.
-- 본문 내 가)나)다) 열거는 하위 서브문단으로 인식해 각각 1문장 요약 후 합친다.
-
-[중요도 선별 규칙]
-1) 문단들에 내부적으로 중요도 점수(0~5)를 매겨 상위 K개만 사용한다(K=7를 기본으로, 필요시 6~8 조정).
-   - 가중치+: 금액·일시·등기·송금, 결론 연결어(따라서/그러나/결국/… 판단한다), 항변 인용/배척, 조문·판례 번호
-   - 가중치-: 원론적 법리 서설, 증거목록/호증 나열
-2) 상위 문단만 근거로 OUTPUT을 작성한다.
-3) 숫자·날짜·법적 효과(피보전채권/증여/사해/선의 항변 배척 등)는 반드시 남긴다.
-4) 한국어로, 불필요한 수식어 금지. 분량 제한을 엄수한다.
-5) '주문'은 요약의 앵커로 삼되 스코어링에는 포함하지 않는다.`;
-
-    // 이유 섹션 내용 준비
-    let reasonContent = '';
-    if (processedContent.reasonUnits && processedContent.reasonUnits.length > 0) {
-      reasonContent = processedContent.reasonUnits
-        .map(unit => `${unit.number}. ${unit.title}\n${unit.content}`)
-        .join('\n\n');
-    } else if (processedContent.reason) {
-      reasonContent = processedContent.reason;
+    // LLMApi가 로드되었는지 확인
+    if (!window.LLMApi || !window.LLMApi.summarizePrecedent) {
+      console.error('[Panel] LLMApi not loaded');
+      return { success: false, error: 'LLM API not available' };
     }
 
-    const userPrompt = `[사용자 입력]
-판례 정보:
-- 유형: ${processedContent.caseType || '판례'}
-- 제목: ${processedContent.title || ''}
-- 판례번호: ${processedContent.caseNumber || ''}
-
-주문:
-${processedContent.jumun || ''}
-
-요약이 필요한 부분:
-${reasonContent}
-
-[OUTPUT 형식(그대로 지켜서 출력)]
-1) 이 사건 간단 압축 요약(3문장)
-- (문장1) 70~110자
-- (문장2) 70~110자
-- (문장3) 70~110자
-
-2) 구조화 요약(보고서용 표준형)
-- 쟁점: 2~3개 불릿
-- 주요 사실: 3~5개 불릿(금액/일시/행위 위주)
-- 법리 요지: 3~4개 불릿(조문·판례는 번호만)
-- 구체 판단: 3~5개 불릿(항변 인용/배척 포함)
-- 결론/주문: 2~3개 불릿(이자율·기산점 포함)
-제한: 전체 600~800자`;
-
-    // 요청 식별자 생성 (동시 요청 구분용)
-    const reqId = crypto.randomUUID?.() || String(Date.now()) + '_' + Math.random();
-
-    // background script로 메시지 전송
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage({
-        topic: 'llm:call',
-        reqId: reqId,
-        payload: {
-          model: 'gpt-4o-mini',  // GPT-4o-mini 모델 사용
-          messages: [  // OpenAI API는 messages 형식 사용
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          max_tokens: 2000,  // OpenAI는 max_tokens 사용
-          temperature: 0.2,
-          stream: false  // 일단 스트리밍 비활성화 (안정성)
-        }
-      }, (response) => {
-        // Chrome runtime 에러 체크
-        if (chrome.runtime.lastError) {
-          console.error('[Panel] Chrome runtime error:', chrome.runtime.lastError);
-          resolve({
-            success: false,
-            error: 'Extension error: ' + chrome.runtime.lastError.message
-          });
-          return;
-        }
-
-        console.log('[Panel] LLM response for reqId:', reqId, response);
-
-        // reqId 확인 (응답이 올바른 요청에 대한 것인지)
-        if (response && response.reqId === reqId && response.ok) {
-          resolve({
-            success: true,
-            result: response.text,
-            usage: response.usage
-          });
-        } else if (response && !response.ok) {
-          resolve({
-            success: false,
-            error: response?.error || 'API 호출 실패'
-          });
-        } else {
-          resolve({
-            success: false,
-            error: 'Invalid response or reqId mismatch'
-          });
-        }
+    try {
+      // api.js의 summarizePrecedent 함수 호출 (프롬프트는 api.js에 정의된 것 사용)
+      const result = await window.LLMApi.summarizePrecedent(processedContent, {
+        provider: 'openai',
+        promptType: 'summarize'
       });
-    });
+
+      console.log('[Panel] LLM API response:', result);
+      return result;
+
+    } catch (error) {
+      console.error('[Panel] Error calling LLM API:', error);
+      return {
+        success: false,
+        error: error.message || 'Failed to call LLM API'
+      };
+    }
   }
 
   // reason 섹션을 숫자 단위로 분할하는 함수
@@ -797,7 +1076,10 @@ ${reasonContent}
           window.__lastProcessedContent = {
             jumun: processed.jumun,
             reason: processed.reason,
-            reasonUnits: processed.reasonUnits
+            reasonUnits: processed.reasonUnits,
+            caseType: data.clickedInfo?.caseType || detail.caseType,
+            caseNumber: data.clickedInfo?.caseNumber || detail.caseNumber,
+            title: data.clickedInfo?.title || detail.title
           };
           console.log('[Panel] Processed content saved:', {
             jumunLength: processed.jumun.length,
@@ -805,15 +1087,28 @@ ${reasonContent}
             reasonUnitsCount: processed.reasonUnits.length
           });
           return `
-          <div class="info-section">
-            <div class="info-label">판례 상세 내용</div>
-            <div class="detail-content">
-              <pre>${processed.formatted}</pre>
-            </div>
+          <div class="ai-section">
             <button class="llm-button" id="llm-summarize-btn">
               🤖 AI로 판례 요약하기
             </button>
             <div id="llm-result-container"></div>
+          </div>
+
+          <div class="section-divider"></div>
+
+          <div class="info-section">
+            <div class="detail-toggle-header" id="detail-toggle">
+              <div class="detail-toggle-title">
+                <span class="toggle-arrow" id="toggle-arrow">▼</span>
+                📄 판례 상세 내용
+              </div>
+              <span style="font-size: 12px; color: #666;">클릭하여 펼치기/접기</span>
+            </div>
+            <div class="detail-content-wrapper" id="detail-content-wrapper">
+              <div class="detail-content">
+                <pre>${processed.formatted}</pre>
+              </div>
+            </div>
           </div>
           `;
         })() : ''}
@@ -836,6 +1131,31 @@ ${reasonContent}
       if (llmBtn) {
         llmBtn.addEventListener('click', function() {
           handleLLMSummarize();
+        });
+      }
+
+      // 토글 기능 이벤트 설정
+      const toggleHeader = document.getElementById('detail-toggle');
+      const contentWrapper = document.getElementById('detail-content-wrapper');
+      const toggleArrow = document.getElementById('toggle-arrow');
+
+      if (toggleHeader && contentWrapper && toggleArrow) {
+        // 초기 상태: 접힌 상태로 시작
+        contentWrapper.classList.add('collapsed');
+        toggleArrow.classList.add('collapsed');
+
+        toggleHeader.addEventListener('click', function() {
+          const isCollapsed = contentWrapper.classList.contains('collapsed');
+
+          if (isCollapsed) {
+            // 펼치기
+            contentWrapper.classList.remove('collapsed');
+            toggleArrow.classList.remove('collapsed');
+          } else {
+            // 접기
+            contentWrapper.classList.add('collapsed');
+            toggleArrow.classList.add('collapsed');
+          }
         });
       }
     } else {
