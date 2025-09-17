@@ -19,6 +19,8 @@
         "lib/network-id.js",
         "lib/docid-utils.js",
         "llm/api.js",
+        "storage/folder-manager.js",
+        "content/folder-ui.js",
         "content/capture.js",
         "content/bridge.js",
         "content/panel.view.js"

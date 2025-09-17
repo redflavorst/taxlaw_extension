@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(mkdir:*)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(del \"D:\\PythonProject\\llm\\taxlaw_extension\\content\\sidepanel.js\")"
     ],
     "deny": [],
     "ask": []

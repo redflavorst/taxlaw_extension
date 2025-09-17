@@ -356,7 +356,7 @@
     if (document.getElementById('tax-law-side-panel')) {
       return document.getElementById('tax-law-side-panel');
     }
-    
+
     const panel = document.createElement('div');
     panel.id = 'tax-law-side-panel';
     panel.innerHTML = `
@@ -368,12 +368,14 @@
         <div class="loading">판례 정보를 불러오는 중...</div>
       </div>
     `;
-    
+
     document.body.appendChild(panel);
-    
+
     // 닫기 버튼 이벤트
     document.getElementById('panel-close-btn').addEventListener('click', closePanel);
-    
+
+    // 폴더 UI는 나중에 초기화 (패널이 열릴 때)
+
     return panel;
   }
   
@@ -389,34 +391,47 @@
       title: data?.clickedInfo?.title
     });
 
+    // 마지막 데이터 저장
+    if (data && data.docId) {
+      window.__lastPanelData = data;
+    }
+
     injectStyles();
-    const panel = createPanel();
+
+    // 기존 패널이 있으면 재사용, 없으면 생성
+    let panel = document.getElementById('tax-law-side-panel');
+    if (!panel) {
+      panel = createPanel();
+    }
 
     // 데이터 표시
     const contentDiv = document.getElementById('panel-content');
+
 
     if (data && data.docId) {
       // 로딩 상태 확인
       if (data.loading) {
         contentDiv.innerHTML = `
-          <div class="doc-id-display">
-            <div class="doc-id-label">DOC_ID</div>
-            <div class="doc-id-value" id="doc-id-value">${data.docId}</div>
-            <button class="copy-button" id="copy-doc-id">복사</button>
-          </div>
-          
           <div class="loading">
             판례 상세 내용을 불러오는 중...
           </div>
+
+          <!-- 폴더 섹션 컨테이너 -->
+          <div id="folder-container"></div>
         `;
+
+        // 폴더 UI 초기화 (기존 인스턴스가 없는 경우에만)
+        setTimeout(() => {
+          if (window.FolderUI && document.getElementById('folder-container') && !window.__folderUI) {
+            window.__folderUI = new window.FolderUI(document.getElementById('folder-container'));
+          } else if (window.__folderUI && document.getElementById('folder-container')) {
+            // 기존 인스턴스가 있으면 컨테이너에 다시 렌더링
+            window.__folderUI.container = document.getElementById('folder-container');
+            window.__folderUI.render();
+          }
+        }, 100);
       } else {
         contentDiv.innerHTML = `
-          <div class="doc-id-display">
-            <div class="doc-id-label">DOC_ID</div>
-            <div class="doc-id-value" id="doc-id-value">${data.docId}</div>
-            <button class="copy-button" id="copy-doc-id">복사</button>
-          </div>
-          
           ${data.matchMethod ? `
           <div class="info-section">
             <div class="info-label">매칭 방법</div>
@@ -426,21 +441,21 @@
           
           ${data.clickedInfo && data.clickedInfo.caseNumber ? `
           <div class="info-section">
-            <div class="info-label">판례번호</div>
-            <div class="info-value">${data.clickedInfo.caseNumber}</div>
+            <div class="info-label">📋 판례번호</div>
+            <div class="info-value" style="font-weight: 600; color: #0066cc;">${data.clickedInfo.caseNumber}</div>
           </div>
           ` : ''}
 
           ${data.clickedInfo && data.clickedInfo.caseType ? `
           <div class="info-section">
-            <div class="info-label">유형</div>
+            <div class="info-label">📑 유형</div>
             <div class="info-value">${data.clickedInfo.caseType}</div>
           </div>
           ` : ''}
 
           ${data.clickedInfo && data.clickedInfo.title ? `
           <div class="info-section">
-            <div class="info-label">제목</div>
+            <div class="info-label">📄 제목</div>
             <div class="info-value">${data.clickedInfo.title}</div>
           </div>
           ` : ''}
@@ -448,22 +463,43 @@
           <div class="success">
             판례 정보가 성공적으로 추출되었습니다.
           </div>
+
+          <!-- 폴더 섹션 컨테이너 -->
+          <div id="folder-container"></div>
         `;
+
+        // 폴더 UI 초기화 (기존 인스턴스가 없는 경우에만)
+        setTimeout(() => {
+          if (window.FolderUI && document.getElementById('folder-container') && !window.__folderUI) {
+            window.__folderUI = new window.FolderUI(document.getElementById('folder-container'));
+          } else if (window.__folderUI && document.getElementById('folder-container')) {
+            // 기존 인스턴스가 있으면 컨테이너에 다시 렌더링
+            window.__folderUI.container = document.getElementById('folder-container');
+            window.__folderUI.render();
+          }
+        }, 100);
       }
-      
-      // 복사 버튼 이벤트
-      const copyBtn = document.getElementById('copy-doc-id');
-      if (copyBtn) {
-        copyBtn.addEventListener('click', function() {
-          copyToClipboard(data.docId, copyBtn);
-        });
-      }
+
     } else {
       contentDiv.innerHTML = `
         <div class="error">
           판례 정보를 찾을 수 없습니다.
         </div>
+
+        <!-- 폴더 섹션 컨테이너 -->
+        <div id="folder-container"></div>
       `;
+
+      // 에러 상태에서도 폴더 UI 초기화 (기존 인스턴스가 없는 경우에만)
+      setTimeout(() => {
+        if (window.FolderUI && document.getElementById('folder-container') && !window.__folderUI) {
+          window.__folderUI = new window.FolderUI(document.getElementById('folder-container'));
+        } else if (window.__folderUI && document.getElementById('folder-container')) {
+          // 기존 인스턴스가 있으면 컨테이너에 다시 렌더링
+          window.__folderUI.container = document.getElementById('folder-container');
+          window.__folderUI.render();
+        }
+      }, 100);
     }
     
     // 패널 열기 애니메이션
@@ -472,14 +508,60 @@
     }, 10);
   }
   
-  // 패널 닫기
+  // 패널 토글
+  function togglePanel() {
+    const panel = document.getElementById('tax-law-side-panel');
+
+    if (panel) {
+      // 기존 패널이 있는 경우
+      if (panel.classList.contains('open')) {
+        // 열려있으면 닫기
+        closePanel();
+      } else {
+        // 닫혀있으면 다시 열기 (기존 상태 유지)
+        panel.classList.add('open');
+      }
+    } else {
+      // 패널이 없는 경우 (첫 번째 열기)
+      if (window.__lastPanelData) {
+        openPanel(window.__lastPanelData);
+      } else {
+        // 빈 패널 생성
+        injectStyles();
+        const newPanel = createPanel();
+
+        // 폴더 UI만 표시
+        const contentDiv = document.getElementById('panel-content');
+        contentDiv.innerHTML = `
+          <div class="info-section">
+            <div class="info-label">Tax Law Assistant</div>
+            <div class="info-value">판례를 우클릭하고 '요약하기'를 선택하세요</div>
+          </div>
+          <div id="folder-container"></div>
+        `;
+
+        // 패널 열기 애니메이션
+        setTimeout(() => {
+          newPanel.classList.add('open');
+
+          // 폴더 UI 초기화
+          if (window.FolderUI && !window.__folderUI) {
+            const container = document.getElementById('folder-container');
+            if (container) {
+              window.__folderUI = new window.FolderUI(container);
+            }
+          }
+        }, 10);
+      }
+    }
+  }
+
+  // 패널 닫기 (DOM은 유지하고 숨김만 처리)
   function closePanel() {
     const panel = document.getElementById('tax-law-side-panel');
     if (panel) {
       panel.classList.remove('open');
-      setTimeout(() => {
-        panel.remove();
-      }, 300);
+      // DOM과 폴더 UI 인스턴스는 유지 (상태 보존)
     }
   }
   
@@ -774,6 +856,23 @@
             copyToClipboard(response.result, copyBtn);
           });
         }
+
+        // 저장 컨트롤 추가
+        if (window.__folderUI) {
+          const summaryData = {
+            docId: window.__lastProcessedContent?.docId || Date.now().toString(),
+            metadata: {
+              caseNumber: window.__lastProcessedContent?.caseNumber,
+              caseType: window.__lastProcessedContent?.caseType,
+              title: window.__lastProcessedContent?.title
+            },
+            sections: formattedSections,
+            preview: formattedSections.summary ? formattedSections.summary.join(' ').substring(0, 200) : '요약 내용 없음'
+          };
+
+          window.__folderUI.currentSummary = summaryData;
+          window.__folderUI.renderSaveControls(resultContainer, summaryData);
+        }
       } else {
         // 실패 시 에러 표시
         resultContainer.innerHTML = `
@@ -1028,11 +1127,6 @@
     if (data.success && data.detail) {
       const detail = data.detail;
       contentDiv.innerHTML = `
-        <div class="doc-id-display">
-          <div class="doc-id-label">DOC_ID</div>
-          <div class="doc-id-value" id="doc-id-value">${data.docId}</div>
-          <button class="copy-button" id="copy-doc-id">복사</button>
-        </div>
 
         ${data.clickedInfo && data.clickedInfo.caseNumber ? `
         <div class="info-section">
@@ -1079,7 +1173,8 @@
             reasonUnits: processed.reasonUnits,
             caseType: data.clickedInfo?.caseType || detail.caseType,
             caseNumber: data.clickedInfo?.caseNumber || detail.caseNumber,
-            title: data.clickedInfo?.title || detail.title
+            title: data.clickedInfo?.title || detail.title,
+            docId: data.docId // docId 추가
           };
           console.log('[Panel] Processed content saved:', {
             jumunLength: processed.jumun.length,
@@ -1117,6 +1212,14 @@
           판례 상세 내용을 성공적으로 불러왔습니다.
         </div>
       `;
+
+      // 폴더 UI 추가
+      if (window.FolderUI && !document.getElementById('folder-section')) {
+        const folderContainer = document.createElement('div');
+        folderContainer.id = 'folder-container';
+        contentDiv.appendChild(folderContainer);
+        window.__folderUI = new window.FolderUI(folderContainer);
+      }
 
       // 복사 버튼 이벤트 재설정
       const copyBtn = document.getElementById('copy-doc-id');
@@ -1160,10 +1263,6 @@
       }
     } else {
       contentDiv.innerHTML = `
-        <div class="doc-id-display">
-          <div class="doc-id-label">DOC_ID</div>
-          <div class="doc-id-value">${data.docId}</div>
-        </div>
 
         <div class="error">
           판례 상세 내용을 불러올 수 없습니다.
@@ -1192,6 +1291,26 @@
     }
   });
   
+  // Ctrl+Q 키보드 이벤트 리스너
+  document.addEventListener('keydown', function(e) {
+    // Ctrl+Q 또는 Cmd+Q (Mac)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'q') {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('[Panel] Ctrl+Q pressed - toggling panel');
+      togglePanel();
+    }
+
+    // ESC 키로 패널 닫기
+    if (e.key === 'Escape') {
+      const panel = document.getElementById('tax-law-side-panel');
+      if (panel && panel.classList.contains('open')) {
+        e.preventDefault();
+        closePanel();
+      }
+    }
+  });
+
   // 전역 헬퍼 함수 (디버깅용)
   window.__debugOpenPanel = function(docId) {
     openPanel({
@@ -1204,8 +1323,9 @@
       }
     });
   };
-  
+
   window.__debugClosePanel = closePanel;
-  
-  console.log('[Panel] Side panel ready');
+  window.__togglePanel = togglePanel;
+
+  console.log('[Panel] Side panel ready - Ctrl+Q to toggle');
 })();

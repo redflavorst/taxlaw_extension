@@ -73,13 +73,13 @@
   // Background script로부터 메시지 수신
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('[Bridge] Received message from background:', request.type);
-    
+
     switch(request.type) {
       case 'MSG_ARM_CAPTURE':
         // 우클릭 캡처 활성화 신호
         handleArmCapture(sendResponse);
         return true; // 비동기 응답을 위해 true 반환
-        
+
       case 'MSG_GET_PRECEDENT_LIST':
         // 저장된 판례 목록 반환
         sendResponse({
@@ -88,11 +88,12 @@
           lastUpdate: lastUpdateTime
         });
         break;
-        
+
+
       default:
         sendResponse({ success: false, error: 'Unknown message type' });
     }
-    
+
     return false; // 동기적 응답
   });
   
