@@ -994,6 +994,26 @@
     return units;
   }
 
+  // 독립된 줄에 있는 텍스트 찾기 함수
+  function findStandaloneText(content, searchText) {
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      // 특수문자(괄호 등) 제거하고 비교
+      const cleanLine = line.replace(/[\[\]【】\(\)]/g, '').trim();
+
+      if (cleanLine === searchText) {
+        // 해당 줄이 나타나는 첫 위치 찾기
+        let position = 0;
+        for (let j = 0; j < i; j++) {
+          position += lines[j].length + 1; // +1 for newline
+        }
+        return position;
+      }
+    }
+    return -1;
+  }
+
   // 판례 내용 전처리 함수
   function preprocessContent(content, caseType) {
     if (!content) return { formatted: content, jumun: '', reason: '', reasonUnits: [] };
@@ -1003,19 +1023,82 @@
     let reason = '';
     let reasonUnits = [];
 
+    // 먼저 모든 주문/이유 패턴을 표준 형식으로 통일
+    const mainPatternReplacements = [
+      ['[주 문]', '주 문'],
+      ['【주 문】', '주 문'],
+      ['【주문】', '주 문']
+    ];
+
+    const reasonPatternReplacements = [
+      ['[이 유]', '이 유'],
+      ['【이 유】', '이 유'],
+      ['【이유】', '이 유']
+    ];
+
+    // 패턴 치환 (독립된 줄에 있는 것만)
+    const lines = processedContent.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const trimmedLine = lines[i].trim();
+
+      // 주문 패턴 치환
+      for (const [pattern, replacement] of mainPatternReplacements) {
+        if (trimmedLine === pattern || trimmedLine === pattern.replace(/\s/g, '')) {
+          lines[i] = lines[i].replace(trimmedLine, replacement);
+          break;
+        }
+      }
+
+      // 이유 패턴 치환
+      for (const [pattern, replacement] of reasonPatternReplacements) {
+        if (trimmedLine === pattern || trimmedLine === pattern.replace(/\s/g, '')) {
+          lines[i] = lines[i].replace(trimmedLine, replacement);
+          break;
+        }
+      }
+    }
+    processedContent = lines.join('\n');
+
     // 유형별 전처리
     switch(caseType) {
       case '판례':
-        // '주 문'과 '이 유' 섹션 찾기
-        const mainTextIndex = processedContent.indexOf('주 문');
-        const reasonIndex = processedContent.indexOf('이 유');
+        // '주 문'과 '이 유' 섹션 찾기 (독립된 줄에 있는 것만)
+        let mainTextIndex = findStandaloneText(processedContent, '주 문');
+        const reasonIndex = findStandaloneText(processedContent, '이 유');
+
+        // '주 문'이 없으면 '1. 처분개요' 또는 '1.처분개요' 찾기
+        if (mainTextIndex === -1) {
+          mainTextIndex = processedContent.indexOf('1. 처분개요');
+          if (mainTextIndex === -1) {
+            mainTextIndex = processedContent.indexOf('1.처분개요');
+          }
+          if (mainTextIndex !== -1) {
+            console.log('[Panel] "주 문" 없음 - "처분개요"부터 시작');
+          }
+        }
+
+        // '주 문'도 '처분개요'도 없으면 불필요한 헤더 텍스트만 제거
+        if (mainTextIndex === -1) {
+          console.log('[Panel] "주 문"과 "처분개요" 모두 없음 - 헤더 텍스트만 제거');
+
+          // 제거할 텍스트 패턴
+          const headerPattern = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+          processedContent = processedContent.replace(headerPattern, '').trim();
+
+          // 전체 내용을 주문으로 설정
+          jumun = processedContent;
+          mainTextIndex = 0; // 처리된 것으로 표시
+        }
 
         if (mainTextIndex !== -1) {
           if (reasonIndex !== -1 && reasonIndex > mainTextIndex) {
-            // 주문 섹션: '주 문'부터 '이 유' 전까지
+            // 주문 섹션: '주 문' 또는 '1. 처분개요'부터 '이 유' 전까지
             jumun = processedContent.substring(mainTextIndex, reasonIndex)
               .replace('주 문', '')
+              .replace('1. 처분개요', '1. 처분개요')  // '1. 처분개요'는 유지
+              .replace('1.처분개요', '1.처분개요')      // '1.처분개요'도 유지
               .trim();
+
             // 이유 섹션: '이 유'부터 끝까지
             reason = processedContent.substring(reasonIndex)
               .replace('이 유', '')
@@ -1027,6 +1110,8 @@
             // '이 유'가 없으면 전체를 주문으로
             jumun = processedContent.substring(mainTextIndex)
               .replace('주 문', '')
+              .replace('1. 처분개요', '1. 처분개요')  // '1. 처분개요'는 유지
+              .replace('1.처분개요', '1.처분개요')      // '1.처분개요'도 유지
               .trim();
           }
 
@@ -1062,30 +1147,124 @@
         break;
 
       case '심판':
-        // '결정' 또는 '주문' 이전 내용 제거
-        const decisionIndex = processedContent.indexOf('결정');
-        const orderIndex = processedContent.indexOf('주문');
-        const startIndex = Math.min(
-          decisionIndex > -1 ? decisionIndex : Infinity,
-          orderIndex > -1 ? orderIndex : Infinity
-        );
-        if (startIndex !== Infinity) {
-          processedContent = processedContent.substring(startIndex);
+        // '주 문'과 '이 유' 섹션을 찾기 (독립된 줄에 있는 것만)
+        let mainTextIdxSimpan = findStandaloneText(processedContent, '주 문');
+        const reasonIdxSimpan = findStandaloneText(processedContent, '이 유');
+
+        // '주 문'이 없으면 '1. 처분개요' 또는 '1.처분개요' 찾기
+        if (mainTextIdxSimpan === -1) {
+          mainTextIdxSimpan = processedContent.indexOf('1. 처분개요');
+          if (mainTextIdxSimpan === -1) {
+            mainTextIdxSimpan = processedContent.indexOf('1.처분개요');
+          }
+          if (mainTextIdxSimpan !== -1) {
+            console.log('[Panel] 심판 - "주 문" 없음, "처분개요"부터 시작');
+          }
+        }
+
+        // '주 문'도 '처분개요'도 없으면 불필요한 헤더 텍스트만 제거
+        if (mainTextIdxSimpan === -1) {
+          console.log('[Panel] 심판 - "주 문"과 "처분개요" 모두 없음 - 헤더 텍스트만 제거');
+
+          // 제거할 텍스트 패턴
+          const headerPattern = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+          processedContent = processedContent.replace(headerPattern, '').trim();
+
+          // 전체 내용을 주문으로 설정
+          jumun = processedContent;
+          mainTextIdxSimpan = 0; // 처리된 것으로 표시
+        }
+
+        if (mainTextIdxSimpan !== -1) {
+          // '주 문'부터 시작
+          if (reasonIdxSimpan !== -1 && reasonIdxSimpan > mainTextIdxSimpan) {
+            // 주문 섹션: '주 문'부터 '이 유' 전까지
+            jumun = processedContent.substring(mainTextIdxSimpan, reasonIdxSimpan)
+              .replace('주 문', '')
+              .trim();
+
+            // 이유 섹션: '이 유'부터 끝까지
+            reason = processedContent.substring(reasonIdxSimpan)
+              .replace('이 유', '')
+              .trim();
+
+            // 섹션 구분하여 표시
+            processedContent = '';
+            if (jumun) {
+              processedContent += '【주문】\n' + jumun;
+            }
+            if (reason) {
+              processedContent += '\n\n【이유】\n' + reason;
+            }
+          } else {
+            // '이 유'가 없으면 '주 문'부터 끝까지
+            processedContent = processedContent.substring(mainTextIdxSimpan);
+          }
+        } else {
+          // '주 문'이 없으면 전체 내용 유지
+          console.log('[Panel] 심판 유형이지만 "주 문"을 찾을 수 없음');
         }
         break;
 
       case '이의':
       case '적부':
       case '심사':
-        // '결정내용' 또는 '판단' 이전 내용 제거
-        const decisionContentIndex = processedContent.indexOf('결정내용');
-        const judgmentIndex = processedContent.indexOf('판단');
-        const startPoint = Math.min(
-          decisionContentIndex > -1 ? decisionContentIndex : Infinity,
-          judgmentIndex > -1 ? judgmentIndex : Infinity
-        );
-        if (startPoint !== Infinity) {
-          processedContent = processedContent.substring(startPoint);
+        // '주 문'과 '이 유' 섹션을 찾기 (독립된 줄에 있는 것만)
+        let mainTextIdx = findStandaloneText(processedContent, '주 문');
+        const reasonIdx = findStandaloneText(processedContent, '이 유');
+
+        // '주 문'이 없으면 '1. 처분개요' 또는 '1.처분개요' 찾기
+        if (mainTextIdx === -1) {
+          mainTextIdx = processedContent.indexOf('1. 처분개요');
+          if (mainTextIdx === -1) {
+            mainTextIdx = processedContent.indexOf('1.처분개요');
+          }
+          if (mainTextIdx !== -1) {
+            console.log('[Panel] 심사/이의/적부 - "주 문" 없음, "처분개요"부터 시작');
+          }
+        }
+
+        // '주 문'도 '처분개요'도 없으면 불필요한 헤더 텍스트만 제거
+        if (mainTextIdx === -1) {
+          console.log('[Panel] 심사/이의/적부 - "주 문"과 "처분개요" 모두 없음 - 헤더 텍스트만 제거');
+
+          // 제거할 텍스트 패턴
+          const headerPattern = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+          processedContent = processedContent.replace(headerPattern, '').trim();
+
+          // 전체 내용을 주문으로 설정
+          jumun = processedContent;
+          mainTextIdx = 0; // 처리된 것으로 표시
+        }
+
+        if (mainTextIdx !== -1) {
+          // '주 문'부터 시작
+          if (reasonIdx !== -1 && reasonIdx > mainTextIdx) {
+            // 주문 섹션: '주 문'부터 '이 유' 전까지
+            jumun = processedContent.substring(mainTextIdx, reasonIdx)
+              .replace('주 문', '')
+              .trim();
+
+            // 이유 섹션: '이 유'부터 끝까지
+            reason = processedContent.substring(reasonIdx)
+              .replace('이 유', '')
+              .trim();
+
+            // 섹션 구분하여 표시
+            processedContent = '';
+            if (jumun) {
+              processedContent += '【주문】\n' + jumun;
+            }
+            if (reason) {
+              processedContent += '\n\n【이유】\n' + reason;
+            }
+          } else {
+            // '이 유'가 없으면 '주 문'부터 끝까지
+            processedContent = processedContent.substring(mainTextIdx);
+          }
+        } else {
+          // '주 문'이 없으면 전체 내용 유지
+          console.log('[Panel] 심사/이의/적부 유형이지만 "주 문"을 찾을 수 없음');
         }
         break;
 
@@ -1192,10 +1371,25 @@
           <div class="section-divider"></div>
 
           <div class="info-section">
+            <div class="detail-toggle-header" id="detail-toggle-original">
+              <div class="detail-toggle-title">
+                <span class="toggle-arrow" id="toggle-arrow-original">▼</span>
+                📑 판례 상세 내용 (원본)
+              </div>
+              <span style="font-size: 12px; color: #666;">클릭하여 펼치기/접기</span>
+            </div>
+            <div class="detail-content-wrapper" id="detail-content-wrapper-original" style="display: none;">
+              <div class="detail-content" style="background: #fff9e6; border-color: #ffc107;">
+                <pre>${detail.content}</pre>
+              </div>
+            </div>
+          </div>
+
+          <div class="info-section">
             <div class="detail-toggle-header" id="detail-toggle">
               <div class="detail-toggle-title">
                 <span class="toggle-arrow" id="toggle-arrow">▼</span>
-                📄 판례 상세 내용
+                📄 판례 상세 내용 (전처리 후)
               </div>
               <span style="font-size: 12px; color: #666;">클릭하여 펼치기/접기</span>
             </div>
@@ -1237,7 +1431,34 @@
         });
       }
 
-      // 토글 기능 이벤트 설정
+      // 토글 기능 이벤트 설정 - 원본
+      const toggleHeaderOriginal = document.getElementById('detail-toggle-original');
+      const contentWrapperOriginal = document.getElementById('detail-content-wrapper-original');
+      const toggleArrowOriginal = document.getElementById('toggle-arrow-original');
+
+      if (toggleHeaderOriginal && contentWrapperOriginal && toggleArrowOriginal) {
+        // 초기 상태: 접힌 상태로 시작
+        contentWrapperOriginal.classList.add('collapsed');
+        toggleArrowOriginal.classList.add('collapsed');
+
+        toggleHeaderOriginal.addEventListener('click', function() {
+          const isCollapsed = contentWrapperOriginal.classList.contains('collapsed');
+
+          if (isCollapsed) {
+            // 펼치기
+            contentWrapperOriginal.classList.remove('collapsed');
+            toggleArrowOriginal.classList.remove('collapsed');
+            contentWrapperOriginal.style.display = 'block';
+          } else {
+            // 접기
+            contentWrapperOriginal.classList.add('collapsed');
+            toggleArrowOriginal.classList.add('collapsed');
+            contentWrapperOriginal.style.display = 'none';
+          }
+        });
+      }
+
+      // 토글 기능 이벤트 설정 - 전처리 후
       const toggleHeader = document.getElementById('detail-toggle');
       const contentWrapper = document.getElementById('detail-content-wrapper');
       const toggleArrow = document.getElementById('toggle-arrow');

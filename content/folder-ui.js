@@ -662,7 +662,7 @@
             <div class="summary-preview">📝 ${summary.preview || '요약 내용 없음'}</div>
             <div class="summary-meta">
               <span class="summary-date">${new Date(summary.createdAt).toLocaleDateString('ko-KR')}</span>
-              <button class="summary-open-btn" data-summary-id="${summary.id}">📑 열기</button>
+              <button class="summary-open-btn" data-summary-id="${summary.id}">📑 원본열기</button>
             </div>
           </div>
         `).join('');
@@ -681,17 +681,18 @@
     }
 
     attachSummaryEventListeners(container) {
-      // 요약 카드 클릭 (열기)
+      // 요약 카드 클릭 (사이드패널에 표시)
       container.querySelectorAll('.summary-card').forEach(card => {
         card.addEventListener('click', async (e) => {
           if (e.target.closest('.summary-actions') || e.target.closest('.summary-open-btn')) return;
 
           const summaryId = card.dataset.summaryId;
-          await this.openSummary(summaryId);
+          // 사이드패널에 요약 표시
+          await this.showSummaryInPanel(summaryId);
         });
       });
 
-      // 열기 버튼
+      // 열기 버튼 (새 탭으로 원본 판례 열기)
       container.querySelectorAll('.summary-open-btn').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();
@@ -790,12 +791,43 @@
     async openSummary(summaryId) {
       try {
         const summary = await window.FolderStorage.summaries.getSummary(summaryId);
-        if (summary) {
-          this.displaySummary(summary);
+        if (summary && summary.docId) {
+          // docId가 12자리가 아니면 패딩
+          const paddedDocId = String(summary.docId).padStart(12, '0');
+
+          // UUID 생성 (wnkey 파라미터용)
+          const wnkey = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+
+          // 판례 상세 페이지 URL 생성
+          const detailUrl = `https://taxlaw.nts.go.kr/pd/USEPDA002P.do?ntstDcmId=${paddedDocId}&wnkey=${wnkey}`;
+
+          // 새 탭에서 열기
+          window.open(detailUrl, '_blank');
+
+          this.showToast('판례 페이지를 새 탭에서 열고 있습니다.', 'info');
+        } else {
+          this.showToast('판례 ID를 찾을 수 없습니다.', 'error');
         }
       } catch (error) {
         console.error('[FolderUI] Failed to open summary:', error);
         this.showToast('요약을 열 수 없습니다.', 'error');
+      }
+    }
+
+    // 사이드패널에 요약 표시 (카드 클릭 시)
+    async showSummaryInPanel(summaryId) {
+      try {
+        const summary = await window.FolderStorage.summaries.getSummary(summaryId);
+        if (summary) {
+          this.displaySummary(summary);
+        }
+      } catch (error) {
+        console.error('[FolderUI] Failed to show summary:', error);
+        this.showToast('요약을 표시할 수 없습니다.', 'error');
       }
     }
 
