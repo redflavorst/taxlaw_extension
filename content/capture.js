@@ -24,24 +24,38 @@
       targetText: target.textContent ? target.textContent.substring(0, 100) : ''
     };
     
-    // bdltCtl 구조에서 판례 LI 찾기
-    const closestLI = target.closest('#bdltCtl > li');
-    
+    // 페이지에 따라 다른 선택자 사용
+    // 1. USEPDI001M.do - #bdltCtl > li
+    // 2. USEPDA001M.do - #dcmListBox > li
+    let closestLI = target.closest('#bdltCtl > li');
+    let parentUL = document.getElementById('bdltCtl');
+
+    // dcmListBox 페이지인 경우
+    if (!closestLI) {
+      closestLI = target.closest('#dcmListBox > li');
+      if (closestLI) {
+        parentUL = document.getElementById('dcmListBox');
+        console.log('[Capture] Found item in dcmListBox');
+      }
+    } else {
+      console.log('[Capture] Found item in bdltCtl');
+    }
+
     if (closestLI) {
       console.log('[Capture] Right-clicked on precedent item');
       
       // 1. rowIndex 저장 (가장 중요!)
-      const parentUL = document.getElementById('bdltCtl');
       if (parentUL) {
         const allLIs = Array.from(parentUL.children);
         precedentInfo.rowIndex = allLIs.indexOf(closestLI);
         console.log('[Capture] ===== ROW INDEX 계산 =====');
+        console.log('[Capture] Container ID:', parentUL.id);
         console.log('[Capture] 전체 LI 개수:', allLIs.length);
         console.log('[Capture] 클릭한 항목의 Row Index:', precedentInfo.rowIndex);
         console.log('[Capture] 클릭한 LI 요소:', closestLI);
         console.log('[Capture] =============================');
       } else {
-        console.log('[Capture] ERROR: bdltCtl 요소를 찾을 수 없음');
+        console.log('[Capture] ERROR: Parent UL 요소를 찾을 수 없음');
       }
       
       // 2. 유형 추출 (첫 번째 li 요소)

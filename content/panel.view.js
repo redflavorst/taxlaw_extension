@@ -1015,13 +1015,30 @@
   }
 
   // 판례 내용 전처리 함수
-  function preprocessContent(content, caseType) {
+  function preprocessContent(content, caseType, isHeonjaeDetail = false) {
     if (!content) return { formatted: content, jumun: '', reason: '', reasonUnits: [] };
 
     let processedContent = content;
     let jumun = '';
     let reason = '';
     let reasonUnits = [];
+
+    // 헌재상세 페이지 특별 처리
+    if (isHeonjaeDetail) {
+      console.log('[Panel] 헌재상세 페이지 감지 - 헤더만 제거하고 전체 내용 표시');
+      const headerPattern = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+      processedContent = processedContent.replace(headerPattern, '').trim();
+
+      // 연속된 줄바꿈 정리
+      processedContent = processedContent.replace(/\n{3,}/g, '\n\n');
+
+      return {
+        formatted: processedContent,
+        jumun: '',
+        reason: '',
+        reasonUnits: []
+      };
+    }
 
     // 먼저 모든 주문/이유 패턴을 표준 형식으로 통일
     const mainPatternReplacements = [
@@ -1207,7 +1224,119 @@
         break;
 
       case '이의':
+        // 먼저 헤더 텍스트 제거
+        const headerPattern = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+        let cleanedContent = processedContent.replace(headerPattern, '');
+
+        // 빈 줄들 제거 (여러 개의 공백, 탭, 줄바꿈 등)
+        cleanedContent = cleanedContent.replace(/^\s+/, '').trim();
+
+        console.log('[Panel] 이의 유형 - cleanedContent 첫 100자:', cleanedContent.substring(0, 100));
+
+        // '이의' 유형 특별 처리: 헤더와 공백 제거 후 '[세 목]'으로 시작하면 '이 유'부터 시작
+        if (cleanedContent.startsWith('[세 목]')) {
+          console.log('[Panel] 이의 유형 - "[세 목]"으로 시작함 (헤더 제거 후)');
+
+          // '이 유' 찾기 - cleanedContent에서 찾기
+          const reasonIdxForSemok = findStandaloneText(cleanedContent, '이 유');
+          console.log('[Panel] 이의 유형 - "이 유" 위치:', reasonIdxForSemok);
+
+          if (reasonIdxForSemok !== -1) {
+            // '이 유'를 찾은 경우: '이 유'부터 끝까지
+            reason = cleanedContent.substring(reasonIdxForSemok)
+              .replace('이 유', '')
+              .trim();
+            processedContent = '【이유】\n' + reason;
+            console.log('[Panel] 이의 유형 - "이 유" 찾음, 이유 섹션 길이:', reason.length);
+          } else {
+            // '이 유'를 못 찾은 경우: 일반 indexOf로 재시도
+            const simpleReasonIdx = cleanedContent.indexOf('이 유');
+
+            if (simpleReasonIdx !== -1) {
+              console.log('[Panel] 이의 유형 - 일반 indexOf로 "이 유" 찾음');
+              reason = cleanedContent.substring(simpleReasonIdx)
+                .replace('이 유', '')
+                .trim();
+              processedContent = '【이유】\n' + reason;
+            } else {
+              // 정말 '이 유'를 못 찾은 경우: '[세 목]' 제거하고 전체 표시
+              console.log('[Panel] 이의 유형 - "이 유" 없음, "[세 목]" 제거 후 전체 표시');
+              processedContent = cleanedContent
+                .replace('[세 목]', '')
+                .trim();
+              processedContent = '【내용】\n' + processedContent;
+            }
+          }
+          break;
+        }
+
+        // '[세 목]'으로 시작하지 않고 '이 유'로 시작하는 경우
+        if (cleanedContent.startsWith('이 유')) {
+          console.log('[Panel] 이의 유형 - "이 유"로 시작함');
+          reason = cleanedContent.replace('이 유', '').trim();
+          processedContent = '【이유】\n' + reason;
+          break;
+        }
+
+        // 그 외의 경우 적부/심사와 동일한 처리
+
       case '적부':
+        // '적부' 유형도 '이의'와 유사하게 '[세 목]' 처리
+        // 먼저 헤더 텍스트 제거
+        const headerPatternJeokbu = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+        let cleanedContentJeokbu = processedContent.replace(headerPatternJeokbu, '');
+
+        // 빈 줄들 제거
+        cleanedContentJeokbu = cleanedContentJeokbu.replace(/^\s+/, '').trim();
+
+        console.log('[Panel] 적부 유형 - cleanedContent 첫 100자:', cleanedContentJeokbu.substring(0, 100));
+
+        // '[세 목]'으로 시작하는 경우 특별 처리
+        if (cleanedContentJeokbu.startsWith('[세 목]')) {
+          console.log('[Panel] 적부 유형 - "[세 목]"으로 시작함');
+
+          // '이 유' 찾기
+          const reasonIdxJeokbu = findStandaloneText(cleanedContentJeokbu, '이 유');
+
+          if (reasonIdxJeokbu !== -1) {
+            // '이 유'를 찾은 경우: '이 유'부터 끝까지
+            reason = cleanedContentJeokbu.substring(reasonIdxJeokbu)
+              .replace('이 유', '')
+              .trim();
+            processedContent = '【이유】\n' + reason;
+            console.log('[Panel] 적부 유형 - "이 유" 찾음');
+          } else {
+            // '이 유'를 못 찾은 경우: 일반 indexOf로 재시도
+            const simpleReasonIdxJeokbu = cleanedContentJeokbu.indexOf('이 유');
+
+            if (simpleReasonIdxJeokbu !== -1) {
+              console.log('[Panel] 적부 유형 - 일반 indexOf로 "이 유" 찾음');
+              reason = cleanedContentJeokbu.substring(simpleReasonIdxJeokbu)
+                .replace('이 유', '')
+                .trim();
+              processedContent = '【이유】\n' + reason;
+            } else {
+              // '이 유'를 못 찾은 경우: '[세 목]' 제거하고 전체 표시
+              console.log('[Panel] 적부 유형 - "이 유" 없음');
+              processedContent = cleanedContentJeokbu
+                .replace('[세 목]', '')
+                .trim();
+              processedContent = '【내용】\n' + processedContent;
+            }
+          }
+          break;
+        }
+
+        // '[세 목]'으로 시작하지 않고 '이 유'로 시작하는 경우
+        if (cleanedContentJeokbu.startsWith('이 유')) {
+          console.log('[Panel] 적부 유형 - "이 유"로 시작함');
+          reason = cleanedContentJeokbu.replace('이 유', '').trim();
+          processedContent = '【이유】\n' + reason;
+          break;
+        }
+
+        // 그 외의 경우 심사와 동일한 일반 처리
+
       case '심사':
         // '주 문'과 '이 유' 섹션을 찾기 (독립된 줄에 있는 것만)
         let mainTextIdx = findStandaloneText(processedContent, '주 문');
@@ -1268,9 +1397,78 @@
         }
         break;
 
+      case '헌재':
+        // '헌재' 유형: 【판시사항】부터 시작
+        // 먼저 헤더 텍스트 제거
+        const headerPatternHeonjae = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+        let cleanedContentHeonjae = processedContent.replace(headerPatternHeonjae, '');
+
+        // 빈 줄들 제거
+        cleanedContentHeonjae = cleanedContentHeonjae.replace(/^\s+/, '').trim();
+
+        console.log('[Panel] 헌재 유형 - cleanedContent 첫 100자:', cleanedContentHeonjae.substring(0, 100));
+
+        // 【판시사항】 찾기
+        const pansiIndex = cleanedContentHeonjae.indexOf('【판시사항】');
+
+        if (pansiIndex !== -1) {
+          // 【판시사항】부터 시작
+          processedContent = cleanedContentHeonjae.substring(pansiIndex);
+          console.log('[Panel] 헌재 유형 - "【판시사항】"부터 시작');
+        } else {
+          // 【판시사항】이 없으면 전체 내용 표시 (헤더만 제거)
+          processedContent = cleanedContentHeonjae;
+          console.log('[Panel] 헌재 유형 - "【판시사항】" 없음, 전체 내용 표시');
+        }
+        break;
+
       default:
-        // 기타 유형은 전처리하지 않음
-        console.log('[Panel] Unknown case type:', caseType);
+        // 기타 유형 - 헤더 텍스트 제거 후 '주 문'이 있으면 그 부분부터, 없으면 전체 표시
+        console.log('[Panel] Default case type:', caseType);
+
+        // 헤더 텍스트 제거
+        const headerPatternDefault = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+        let cleanedContentDefault = processedContent.replace(headerPatternDefault, '');
+
+        // 빈 줄들 제거
+        cleanedContentDefault = cleanedContentDefault.replace(/^\s+/, '').trim();
+
+        // '주 문' 찾기
+        const jumunIndexDefault = findStandaloneText(cleanedContentDefault, '주 문');
+
+        if (jumunIndexDefault !== -1) {
+          // '주 문'부터 시작
+          const jumunStartDefault = cleanedContentDefault.substring(jumunIndexDefault);
+          processedContent = jumunStartDefault;
+          console.log('[Panel] Default type - "주 문"부터 시작');
+
+          // '주 문'과 '이 유' 분리 처리
+          const reasonIndexDefault = findStandaloneText(jumunStartDefault, '이 유');
+          if (reasonIndexDefault !== -1) {
+            jumun = jumunStartDefault.substring(0, reasonIndexDefault)
+              .replace('주 문', '')
+              .trim();
+            reason = jumunStartDefault.substring(reasonIndexDefault)
+              .replace('이 유', '')
+              .trim();
+            reasonUnits = splitReasonByNumbers(reason);
+
+            // 주문과 이유를 표시
+            if (jumun) {
+              processedContent = '【주문】\n' + jumun;
+            }
+            if (reason) {
+              processedContent += '\n\n【이유】\n' + reason;
+            }
+          } else {
+            // '이 유'가 없으면 전체를 주문으로
+            jumun = jumunStartDefault.replace('주 문', '').trim();
+          }
+        } else {
+          // '주 문'이 없으면 헤더만 제거한 전체 내용을 그대로 표시
+          processedContent = cleanedContentDefault;
+          console.log('[Panel] Default type - "주 문" 없음, 전체 내용 표시');
+        }
         break;
     }
 
@@ -1344,7 +1542,7 @@
         ` : ''}
 
         ${detail.content ? (() => {
-          const processed = preprocessContent(detail.content, data.clickedInfo?.caseType || detail.caseType);
+          const processed = preprocessContent(detail.content, data.clickedInfo?.caseType || detail.caseType, data.isHeonjaeDetail);
           // 나중에 jumun, reason, reasonUnits를 별도로 사용 가능
           window.__lastProcessedContent = {
             jumun: processed.jumun,
@@ -1529,6 +1727,51 @@
         e.preventDefault();
         closePanel();
       }
+    }
+  });
+
+  // showPrecedentPanel 커스텀 이벤트 리스너 추가
+  window.addEventListener('showPrecedentPanel', function(event) {
+    console.log('[Panel] Received showPrecedentPanel event:', event.detail);
+    const data = event.detail;
+
+    if (data.loading) {
+      // 로딩 상태로 패널 열기
+      openPanel(data);
+    } else if (data.content) {
+      // 스타일 주입
+      injectStyles();
+
+      // 패널이 없으면 먼저 생성
+      let panel = document.getElementById('tax-law-side-panel');
+      if (!panel) {
+        console.log('[Panel] Creating new panel');
+        panel = createPanel();
+      }
+
+      // 콘텐츠가 있을 때 패널 업데이트
+      updatePanel({
+        ...data,
+        success: true,
+        detail: {
+          content: data.content,
+          caseType: data.clickedInfo?.caseType,
+          caseNumber: data.clickedInfo?.caseNumber,
+          title: data.clickedInfo?.title
+        }
+      });
+
+      // 패널 열기
+      console.log('[Panel] Adding open class to panel');
+      setTimeout(() => {
+        const panelToOpen = document.getElementById('tax-law-side-panel');
+        if (panelToOpen) {
+          panelToOpen.classList.add('open');
+          console.log('[Panel] Panel opened successfully');
+        } else {
+          console.error('[Panel] Panel element not found!');
+        }
+      }, 100);
     }
   });
 

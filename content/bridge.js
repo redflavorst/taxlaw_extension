@@ -167,21 +167,154 @@
     // 3. URL 파라미터 폴백 (최후 수단)
     if (!matchedDocId) {
       const urlParams = new URLSearchParams(window.location.search);
-      const urlDocId = urlParams.get('docId') || urlParams.get('doc_id');
-      
+      const urlDocId = urlParams.get('docId') || urlParams.get('doc_id') || urlParams.get('ntstDcmId');
+
       if (urlDocId) {
         matchedDocId = urlDocId.replace(/\D/g, '');
         matchMethod = 'url';
-        
+
         console.log('[Bridge] ⚠️ Fallback to URL parameter:', {
           docId: matchedDocId
         });
       }
     }
+
+    // 4. USEPDA002P.do 페이지 확인 (이미 상세 페이지인 경우)
+    const isDetailPage = window.location.pathname.includes('USEPDA002P.do');
+    if (isDetailPage && !matchedDocId) {
+      const urlParams = new URLSearchParams(window.location.search);
+      matchedDocId = urlParams.get('ntstDcmId');
+      matchMethod = 'detailPage';
+      console.log('[Bridge] 📄 Detail page detected, using ntstDcmId:', matchedDocId);
+    }
     
     // 매칭 결과 처리
     if (matchedDocId) {
-      // Background script로 판례 상세 내용 가져오기 요청
+      // USEPDA002P.do 페이지에서는 직접 콘텐츠 추출
+      if (isDetailPage) {
+        console.log('[Bridge] Extracting content from current detail page');
+
+        // scrnNm 확인 (헌재상세 페이지 처리를 위해)
+        const scrnNmElement = document.querySelector('#scrnNm');
+        const isHeonjaeDetail = scrnNmElement && scrnNmElement.textContent === '헌재상세';
+        console.log('[Bridge] Page type check - isHeonjaeDetail:', isHeonjaeDetail);
+
+        // 기존 extractContentFromPage 함수와 동일한 방식으로 추출
+        const result = {
+          content: null,
+          title: null,
+          caseNumber: null,
+          date: null,
+          debug: {},
+          isHeonjaeDetail: isHeonjaeDetail
+        };
+
+        try {
+          // 방법 1: 정확한 경로로 찾기
+          const bodyContent = document.querySelector('div[data-center-type="body_content"]');
+
+          if (bodyContent) {
+            const wordGroups = bodyContent.querySelectorAll('div.word_group');
+
+            // 3번째 word_group (인덱스 2)
+            if (wordGroups.length >= 3) {
+              const thirdWordGroup = wordGroups[2];
+
+              // 3번째 word_group 자체가 body_content_htmlCntn인지 확인
+              if (thirdWordGroup.getAttribute('data-center-type') === 'body_content_htmlCntn') {
+                result.content = thirdWordGroup.innerText || thirdWordGroup.textContent;
+                result.debug.method = 'body_content > word_group[2] with data-center-type';
+              } else {
+                // 3번째 word_group 내부에서 body_content_htmlCntn 찾기
+                const htmlContent = thirdWordGroup.querySelector('[data-center-type="body_content_htmlCntn"]');
+                if (htmlContent) {
+                  result.content = htmlContent.innerText || htmlContent.textContent;
+                  result.debug.method = 'body_content > word_group[2] > body_content_htmlCntn';
+                }
+              }
+            }
+          }
+
+          // 위 방법이 실패하면 폴백
+          if (!result.content) {
+            const contentElement = document.querySelector('[data-center-type="body_content_htmlCntn"]');
+            if (contentElement) {
+              result.content = contentElement.innerText || contentElement.textContent;
+              result.debug.method = 'data-center-type (fallback)';
+            }
+          }
+
+          // 방법 2: word_group 클래스로 찾기
+          if (!result.content) {
+            const wordGroups = document.querySelectorAll('.word_group');
+            if (wordGroups.length >= 3) {
+              result.content = wordGroups[2].innerText || wordGroups[2].textContent;
+              result.debug.method = 'word_group[2]';
+            }
+          }
+
+          // 방법 3: bo_body_cont 내의 모든 word_group 확인
+          if (!result.content) {
+            const boBodyCont = document.querySelector('.bo_body_cont');
+            if (boBodyCont) {
+              const innerWordGroups = boBodyCont.querySelectorAll('.word_group');
+
+              for (let i = 0; i < innerWordGroups.length; i++) {
+                const group = innerWordGroups[i];
+                const dataType = group.getAttribute('data-center-type');
+                const text = group.innerText || group.textContent;
+
+                // body_content_htmlCntn를 찾았거나, 충분한 길이의 텍스트를 가진 word_group 사용
+                if (dataType === 'body_content_htmlCntn' || (!result.content && text && text.length > 500)) {
+                  result.content = text;
+                  result.debug.method = `word_group[${i}]${dataType ? ' with data-center-type' : ' by length'}`;
+                }
+              }
+            }
+          }
+
+          // 방법 4: 보통 substance_wrap 클래스 사용 (마지막 폴백)
+          if (!result.content) {
+            const substanceWrap = document.querySelector('.substance_wrap');
+            if (substanceWrap) {
+              result.content = substanceWrap.innerText || substanceWrap.textContent;
+              result.debug.method = 'substance_wrap (last fallback)';
+            }
+          }
+
+          console.log('[Bridge] Content extraction result:', result.debug);
+        } catch (error) {
+          console.error('[Bridge] Error extracting content:', error);
+          result.debug.error = error.message;
+        }
+
+        if (result.content) {
+          // 패널 표시 (직접 추출한 데이터로)
+          window.dispatchEvent(new CustomEvent('showPrecedentPanel', {
+            detail: {
+              loading: false,
+              docId: matchedDocId,
+              matchMethod: matchMethod,
+              clickedInfo: clickedInfo,
+              content: result.content,
+              isDirectExtract: true,
+              isHeonjaeDetail: result.isHeonjaeDetail
+            }
+          }));
+
+          sendResponse({
+            success: true,
+            docId: matchedDocId,
+            method: matchMethod,
+            isDetailPage: true
+          });
+          return;
+        } else {
+          console.error('[Bridge] Content not found on detail page');
+        }
+      }
+
+      // 기존 페이지 처리 (Background script로 판례 상세 내용 가져오기 요청)
       try {
         // URL 미리보기 (디버깅용)
         const paddedDocId = String(matchedDocId).padStart(12, '0');
