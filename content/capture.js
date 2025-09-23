@@ -23,10 +23,20 @@
       targetElement: target.tagName,
       targetText: target.textContent ? target.textContent.substring(0, 100) : ''
     };
+
+    // URL 파라미터에서 ntstDcmClCd 확인
+    const urlParams = new URLSearchParams(window.location.search);
+    const ntstDcmClCd = urlParams.get('ntstDcmClCd');
+    if (ntstDcmClCd === '09' || ntstDcmClCd === '10') {
+      precedentInfo.forceExtractGistAndDecision = true;
+      precedentInfo.ntstDcmClCd = ntstDcmClCd;
+      console.log('[Capture] ntstDcmClCd=' + ntstDcmClCd + ' - 요지/결정내용 추출 강제');
+    }
     
     // 페이지에 따라 다른 선택자 사용
     // 1. USEPDI001M.do - #bdltCtl > li
     // 2. USEPDA001M.do - #dcmListBox > li
+    // 3. 검색 페이지 - ul[data-collection-ul="precedent"] > li
     let closestLI = target.closest('#bdltCtl > li');
     let parentUL = document.getElementById('bdltCtl');
 
@@ -37,7 +47,31 @@
         parentUL = document.getElementById('dcmListBox');
         console.log('[Capture] Found item in dcmListBox');
       }
-    } else {
+    }
+
+    // 검색 페이지인 경우 - 판례 컬렉션 (data-collection-ul="precedent")
+    if (!closestLI) {
+      closestLI = target.closest('ul[data-collection-ul="precedent"] > li');
+      if (closestLI) {
+        parentUL = document.querySelector('ul[data-collection-ul="precedent"]');
+        console.log('[Capture] Found item in search result page (data-collection-ul="precedent")');
+        precedentInfo.collectionType = '판례';
+      }
+    }
+
+    // 검색 페이지인 경우 - 질의 컬렉션 (data-collection-ul="question")
+    if (!closestLI) {
+      closestLI = target.closest('ul[data-collection-ul="question"] > li');
+      if (closestLI) {
+        parentUL = document.querySelector('ul[data-collection-ul="question"]');
+        console.log('[Capture] Found item in search result page (data-collection-ul="question")');
+        precedentInfo.collectionType = '질의';
+      }
+    }
+
+    if (!closestLI) {
+      console.log('[Capture] No list item found in any known container');
+    } else if (!parentUL) {
       console.log('[Capture] Found item in bdltCtl');
     }
 
@@ -58,53 +92,152 @@
         console.log('[Capture] ERROR: Parent UL 요소를 찾을 수 없음');
       }
       
-      // 2. 유형 추출 (첫 번째 li 요소)
-      // 구조: div > div > a > ul > li:first-child
-      console.log('[Capture] Looking for caseType element...');
-      const caseTypeElement = closestLI.querySelector(
-        'div:first-child > div:first-child > a > ul > li:first-child'
-      );
-      console.log('[Capture] caseTypeElement found:', !!caseTypeElement);
-      if (caseTypeElement) {
-        precedentInfo.caseType = caseTypeElement.textContent.trim();
-        console.log('[Capture] Case type extracted:', precedentInfo.caseType);
+      // 2. 키워드 검색 페이지에서는 제목과 번호만 추출
+      if (precedentInfo.collectionType) {
+        // 키워드 검색 페이지인 경우
+        console.log('[Capture] Keyword search page - extracting limited info');
+
+        // 제목 추출
+        const titleElement = closestLI.querySelector('.tit');
+        if (titleElement) {
+          precedentInfo.title = titleElement.textContent.trim();
+        }
+
+        // 사건번호 추출 - 심사 유형의 경우 다른 위치에서 가져옴
+        // div.board_box > div.substance_wrap > ul.subs_detail > li:first-child
+        const subsDetailElement = closestLI.querySelector('div.board_box div.substance_wrap ul.subs_detail li:first-child');
+        if (subsDetailElement) {
+          precedentInfo.caseNumber = subsDetailElement.textContent.trim();
+          console.log('[Capture] Case number from subs_detail:', precedentInfo.caseNumber);
+        } else {
+          // 기존 방식으로 시도 (다른 유형용)
+          const numberElement = closestLI.querySelector('.num');
+          if (numberElement) {
+            precedentInfo.caseNumber = numberElement.textContent.trim();
+            console.log('[Capture] Case number from .num:', precedentInfo.caseNumber);
+          }
+        }
+
+        // 유형 추출 - legislation_list의 첫 번째 li 확인
+        const legislationFirstLi = closestLI.querySelector('div.board_box div.substance_wrap a ul.legislation_list li:first-child');
+        if (legislationFirstLi) {
+          const typeText = legislationFirstLi.textContent.trim();
+          console.log('[Capture] Type text from legislation_list:', typeText);
+
+          precedentInfo.caseType = typeText;  // 유형 저장 (심사, 심판, 적부, 이의, 헌재, 판례 등)
+
+          // 심사/심판/적부/이의/헌재/판례 유형 판별
+          if (typeText === '심사' || typeText.includes('심사')) {
+            console.log('[Capture] Case type detected as 심사 from legislation_list');
+          } else if (typeText === '심판' || typeText.includes('심판')) {
+            console.log('[Capture] Case type detected as 심판 from legislation_list');
+          } else if (typeText === '적부' || typeText.includes('적부')) {
+            console.log('[Capture] Case type detected as 적부 from legislation_list');
+          } else if (typeText === '이의' || typeText.includes('이의')) {
+            console.log('[Capture] Case type detected as 이의 from legislation_list');
+          } else if (typeText === '헌재' || typeText.includes('헌재')) {
+            console.log('[Capture] Case type detected as 헌재 from legislation_list');
+          } else if (typeText === '판례' || typeText.includes('판례')) {
+            console.log('[Capture] Case type detected as 판례 from legislation_list');
+          } else if (typeText === '종소' || typeText.includes('종소')) {
+            console.log('[Capture] Case type detected as 종소 from legislation_list');
+          }
+        }
+
+        // 대체 방법: subs_detail에서도 확인 (사건번호에서 유추)
+        if (!precedentInfo.caseType) {
+          const subsDetailFirstLi = closestLI.querySelector('div.board_box div.substance_wrap ul.subs_detail li:first-child');
+          if (subsDetailFirstLi) {
+            const text = subsDetailFirstLi.textContent.trim();
+            console.log('[Capture] First li text in subs_detail:', text);
+
+            // 심사/심판/적부/이의/헌재/판례 유형 판별 - "국심2009서1234" 같은 패턴 확인
+            if (text.includes('국심') || text.includes('조심')) {
+              precedentInfo.caseType = '심사';
+              console.log('[Capture] Case type detected as 심사 from case number pattern:', text);
+            } else if (text.includes('국판') || text.includes('조판')) {
+              precedentInfo.caseType = '심판';
+              console.log('[Capture] Case type detected as 심판 from case number pattern:', text);
+            } else if (text.includes('적부')) {
+              precedentInfo.caseType = '적부';
+              console.log('[Capture] Case type detected as 적부 from case number pattern:', text);
+            } else if (text.includes('이의')) {
+              precedentInfo.caseType = '이의';
+              console.log('[Capture] Case type detected as 이의 from case number pattern:', text);
+            } else if (text.includes('헌재') || text.includes('헌법재판')) {
+              precedentInfo.caseType = '헌재';
+              console.log('[Capture] Case type detected as 헌재 from case number pattern:', text);
+            } else if (text.includes('대법원') || text.includes('고등법원') || text.includes('지방법원')) {
+              precedentInfo.caseType = '판례';
+              console.log('[Capture] Case type detected as 판례 from case number pattern:', text);
+            } else if (text.includes('종소')) {
+              precedentInfo.caseType = '종소';
+              console.log('[Capture] Case type detected as 종소 from case number pattern:', text);
+            }
+          }
+        }
+
+        console.log('[Capture] Search page info:', {
+          title: precedentInfo.title?.substring(0, 30),
+          caseNumber: precedentInfo.caseNumber,
+          caseType: precedentInfo.caseType,
+          rowIndex: precedentInfo.rowIndex,
+          collectionType: precedentInfo.collectionType,
+          ntstDcmClCd: precedentInfo.ntstDcmClCd,
+          forceExtractGistAndDecision: precedentInfo.forceExtractGistAndDecision
+        });
       } else {
-        console.log('[Capture] Failed to find caseType element');
-        // 다른 선택자 시도
-        const altCaseType = closestLI.querySelector('a ul li:first-child');
-        console.log('[Capture] Alternative caseType element:', !!altCaseType);
-        if (altCaseType) {
-          precedentInfo.caseType = altCaseType.textContent.trim();
-          console.log('[Capture] Case type (alt):', precedentInfo.caseType);
+        // 기존 판례 목록 페이지
+        // 2. 유형 추출 (첫 번째 li 요소)
+        // 구조: div > div > a > ul > li:first-child
+        console.log('[Capture] Looking for caseType element...');
+        const caseTypeElement = closestLI.querySelector(
+          'div:first-child > div:first-child > a > ul > li:first-child'
+        );
+        console.log('[Capture] caseTypeElement found:', !!caseTypeElement);
+        if (caseTypeElement) {
+          precedentInfo.caseType = caseTypeElement.textContent.trim();
+          console.log('[Capture] Case type extracted:', precedentInfo.caseType);
+        } else {
+          console.log('[Capture] Failed to find caseType element');
+          // 다른 선택자 시도
+          const altCaseType = closestLI.querySelector('a ul li:first-child');
+          console.log('[Capture] Alternative caseType element:', !!altCaseType);
+          if (altCaseType) {
+            precedentInfo.caseType = altCaseType.textContent.trim();
+            console.log('[Capture] Case type (alt):', precedentInfo.caseType);
+          }
         }
       }
 
-      // 3. 판례번호 추출
-      // 구조: div > div > ul > li:first-child > strong
-      console.log('[Capture] Looking for caseNumber element...');
-      const caseNumberElement = closestLI.querySelector(
-        'div:first-child > div:first-child > ul > li:first-child > strong'
-      );
-      console.log('[Capture] caseNumberElement found:', !!caseNumberElement);
-      if (caseNumberElement) {
-        precedentInfo.caseNumber = caseNumberElement.textContent.trim();
-        console.log('[Capture] Case number extracted:', precedentInfo.caseNumber);
-      } else {
-        console.log('[Capture] Failed to find caseNumber element');
-      }
+      // 3. 판례번호 추출 (키워드 검색 페이지가 아닌 경우)
+      if (!precedentInfo.collectionType) {
+        // 구조: div > div > ul > li:first-child > strong
+        console.log('[Capture] Looking for caseNumber element...');
+        const caseNumberElement = closestLI.querySelector(
+          'div:first-child > div:first-child > ul > li:first-child > strong'
+        );
+        console.log('[Capture] caseNumberElement found:', !!caseNumberElement);
+        if (caseNumberElement) {
+          precedentInfo.caseNumber = caseNumberElement.textContent.trim();
+          console.log('[Capture] Case number extracted:', precedentInfo.caseNumber);
+        } else {
+          console.log('[Capture] Failed to find caseNumber element');
+        }
 
-      // 4. 제목 추출
-      // 구조: div > div > a > strong
-      console.log('[Capture] Looking for title element...');
-      const titleElement = closestLI.querySelector(
-        'div:first-child > div:first-child > a > strong'
-      );
-      console.log('[Capture] titleElement found:', !!titleElement);
-      if (titleElement) {
-        precedentInfo.title = titleElement.textContent.trim();
-        console.log('[Capture] Title extracted:', precedentInfo.title.substring(0, 50) + '...');
-      } else {
-        console.log('[Capture] Failed to find title element');
+        // 4. 제목 추출
+        // 구조: div > div > a > strong
+        console.log('[Capture] Looking for title element...');
+        const titleElement = closestLI.querySelector(
+          'div:first-child > div:first-child > a > strong'
+        );
+        console.log('[Capture] titleElement found:', !!titleElement);
+        if (titleElement) {
+          precedentInfo.title = titleElement.textContent.trim();
+          console.log('[Capture] Title extracted:', precedentInfo.title.substring(0, 50) + '...');
+        } else {
+          console.log('[Capture] Failed to find title element');
+        }
       }
       
       // 5. 추가 정보 수집
@@ -136,6 +269,9 @@
       console.log('[Capture] 제목:', precedentInfo.title || '제목 없음');
       console.log('[Capture] 판례번호:', precedentInfo.caseNumber || '판례번호 없음');
       console.log('[Capture] Row Index:', precedentInfo.rowIndex);
+      if (precedentInfo.forceExtractGistAndDecision) {
+        console.log('[Capture] 강제 추출: ntstDcmClCd=' + precedentInfo.ntstDcmClCd);
+      }
       console.log('[Capture] ======================================');
       console.log('[Capture] 전체 데이터:', precedentInfo);
     }

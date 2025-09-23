@@ -113,15 +113,65 @@
     
     let matchedDocId = null;
     let matchMethod = null;
-    
+
+    // 0. 키워드 검색 페이지인 경우 window.__precedentListData에서 직접 가져오기
+    if (window.location.pathname.includes('USEISA001M.do') && clickedInfo.collectionType) {
+      console.log('[Bridge] Keyword search page detected, checking window.__precedentListData');
+
+      if (window.__precedentListData && window.__precedentListData.length > 0) {
+        console.log('[Bridge] Found data in window.__precedentListData:', window.__precedentListData.length, 'items');
+        savedPrecedentList = window.__precedentListData;
+      } else {
+        console.log('[Bridge] No data in window.__precedentListData, will try to get from injector');
+
+        // Injector에서 데이터 가져오기 시도 - postMessage 사용
+        window.postMessage({
+          type: 'MSG_REQUEST_PRECEDENT_LIST',
+          data: {
+            timestamp: Date.now()
+          }
+        }, window.location.origin);
+        console.log('[Bridge] Requested precedent list from injector');
+
+        // 잠시 대기 후 다시 확인
+        setTimeout(() => {
+          if (savedPrecedentList.length === 0) {
+            console.log('[Bridge] Still no data after retry');
+          }
+        }, 100);
+      }
+    }
+
     // 1. rowIndex 매칭 (최우선)
     console.log('[Bridge] ===== ROW INDEX 매칭 시도 =====');
     console.log('[Bridge] 저장된 판례 목록 개수:', savedPrecedentList.length);
     console.log('[Bridge] 클릭한 rowIndex:', clickedInfo.rowIndex);
     console.log('[Bridge] rowIndex 타입:', typeof clickedInfo.rowIndex);
+    console.log('[Bridge] collectionType:', clickedInfo.collectionType);
 
     if (savedPrecedentList.length > 0) {
-      if (typeof clickedInfo.rowIndex === 'number' &&
+      // 키워드 검색 페이지의 경우 컬렉션 타입도 확인
+      if (clickedInfo.collectionType) {
+        // 컬렉션 타입과 인덱스로 매칭
+        const matchingItems = savedPrecedentList.filter(
+          item => item.collectionType === clickedInfo.collectionType
+        );
+
+        if (matchingItems[clickedInfo.rowIndex]) {
+          const matchedItem = matchingItems[clickedInfo.rowIndex];
+          matchedDocId = matchedItem.docId;
+          matchMethod = 'index_collection';
+
+          console.log('[Bridge] ✓ COLLECTION + INDEX 매칭 성공!');
+          console.log('[Bridge] 매칭된 항목:', {
+            collectionType: clickedInfo.collectionType,
+            rowIndex: clickedInfo.rowIndex,
+            docId: matchedDocId,
+            caseNumber: matchedItem.caseNumber,
+            title: matchedItem.title
+          });
+        }
+      } else if (typeof clickedInfo.rowIndex === 'number' &&
           clickedInfo.rowIndex >= 0 &&
           savedPrecedentList[clickedInfo.rowIndex]) {
 
@@ -204,6 +254,7 @@
           content: null,
           title: null,
           caseNumber: null,
+          caseType: null,
           date: null,
           debug: {},
           isHeonjaeDetail: isHeonjaeDetail
@@ -289,13 +340,95 @@
         }
 
         if (result.content) {
+          // 유형(caseType) 추출 시도 - 상세 페이지에서
+          let extractedCaseType = null;
+
+          // 방법 1: 페이지 내의 유형 정보 찾기
+          const typeLabels = document.querySelectorAll('td, th, span, div');
+          for (const element of typeLabels) {
+            const text = element.textContent.trim();
+            if (text === '구분' || text === '유형' || text === '분류') {
+              // 다음 형제 요소에서 값 추출
+              const nextSibling = element.nextElementSibling;
+              if (nextSibling) {
+                extractedCaseType = nextSibling.textContent.trim();
+                console.log('[Bridge] Case type found via label:', extractedCaseType);
+                break;
+              }
+              // 또는 부모의 다음 형제에서 찾기
+              const parentNext = element.parentElement?.nextElementSibling;
+              if (parentNext) {
+                const valueElement = parentNext.querySelector('td, span, div');
+                if (valueElement) {
+                  extractedCaseType = valueElement.textContent.trim();
+                  console.log('[Bridge] Case type found via parent:', extractedCaseType);
+                  break;
+                }
+              }
+            }
+          }
+
+          // 방법 2: 특정 패턴으로 찾기 (심사, 심판, 판례 등)
+          if (!extractedCaseType) {
+            const pageText = document.body.textContent;
+            const typePatterns = ['심사', '심판', '판례', '대법원', '헌재', '질의'];
+
+            // 다양한 형식으로 찾기
+            for (const pattern of typePatterns) {
+              // 다양한 구분자 패턴으로 시도
+              const patterns = [
+                `유형 : ${pattern}`,
+                `구분 : ${pattern}`,
+                `유형: ${pattern}`,
+                `구분: ${pattern}`,
+                `유형　${pattern}`,  // 전각 공백
+                `구분　${pattern}`,  // 전각 공백
+              ];
+
+              for (const p of patterns) {
+                if (pageText.includes(p)) {
+                  extractedCaseType = pattern;
+                  console.log('[Bridge] Case type found via pattern:', extractedCaseType);
+                  break;
+                }
+              }
+
+              if (extractedCaseType) break;
+            }
+          }
+
+          // 방법 3: 테이블 구조에서 찾기
+          if (!extractedCaseType) {
+            const tables = document.querySelectorAll('table');
+            for (const table of tables) {
+              const cells = table.querySelectorAll('td, th');
+              for (let i = 0; i < cells.length - 1; i++) {
+                const cellText = cells[i].textContent.trim();
+                if (cellText === '유형' || cellText === '구분' || cellText === '분류') {
+                  const nextCellText = cells[i + 1].textContent.trim();
+                  if (nextCellText) {
+                    extractedCaseType = nextCellText;
+                    console.log('[Bridge] Case type found in table:', extractedCaseType);
+                    break;
+                  }
+                }
+              }
+              if (extractedCaseType) break;
+            }
+          }
+
+          result.caseType = extractedCaseType;
+
           // 패널 표시 (직접 추출한 데이터로)
           window.dispatchEvent(new CustomEvent('showPrecedentPanel', {
             detail: {
               loading: false,
               docId: matchedDocId,
               matchMethod: matchMethod,
-              clickedInfo: clickedInfo,
+              clickedInfo: {
+                ...clickedInfo,
+                caseType: result.caseType || clickedInfo?.caseType  // caseType 추가
+              },
               content: result.content,
               isDirectExtract: true,
               isHeonjaeDetail: result.isHeonjaeDetail
@@ -321,9 +454,21 @@
         const previewUrl = `https://taxlaw.nts.go.kr/pd/USEPDA002P.do?ntstDcmId=${paddedDocId}`;
         console.log('[Bridge] 📌 Fetching detail from URL:', previewUrl);
         
+        console.log('[Bridge] Sending MSG_FETCH_DETAIL with:', {
+          docId: matchedDocId,
+          docType: clickedInfo.collectionType,
+          caseType: clickedInfo.caseType,  // 심사 유형 정보 추가
+          forceExtractGistAndDecision: clickedInfo.forceExtractGistAndDecision,
+          ntstDcmClCd: clickedInfo.ntstDcmClCd
+        });
+
         chrome.runtime.sendMessage({
           type: 'MSG_FETCH_DETAIL',
-          docId: matchedDocId
+          docId: matchedDocId,
+          docType: clickedInfo.collectionType, // '질의' 또는 '판례' 전달
+          caseType: clickedInfo.caseType,  // '심사' 정보 추가
+          forceExtractGistAndDecision: clickedInfo.forceExtractGistAndDecision,  // ntstDcmClCd가 09/10일 때
+          ntstDcmClCd: clickedInfo.ntstDcmClCd
         }, (detailResponse) => {
           // Chrome runtime 에러 체크
           if (chrome.runtime.lastError) {
@@ -356,12 +501,38 @@
           }
           
           // 패널 업데이트 (clickedInfo 포함)
+          // detailResponse.content contains the entire extractedData object
+          const detailData = detailResponse.content || {};
+
+          console.log('[Bridge] Detail data received from background:', {
+            hasContent: !!detailData.content,
+            contentLength: detailData.content ? detailData.content.length : 0,
+            hasGist: !!detailData.gist,
+            gistLength: detailData.gist ? detailData.gist.length : 0,
+            hasDecision: !!detailData.decision,
+            decisionLength: detailData.decision ? detailData.decision.length : 0,
+            hasReply: !!detailData.reply,
+            replyLength: detailData.reply ? detailData.reply.length : 0,
+            docType: detailData.docType,
+            caseType: detailData.caseType
+          });
+
           window.postMessage({
             type: 'MSG_UPDATE_PANEL',
             data: {
               docId: matchedDocId,
               success: detailResponse.success,
-              detail: detailResponse.content,
+              detail: {
+                content: detailData.content,
+                caseNumber: detailData.caseNumber,
+                caseType: detailData.caseType,
+                title: detailData.title,
+                date: detailData.date,
+                gist: detailData.gist,
+                reply: detailData.reply,
+                decision: detailData.decision,
+                docType: detailData.docType
+              },
               error: detailResponse.error,
               clickedInfo: clickedInfo  // 클릭한 정보 유지
             }

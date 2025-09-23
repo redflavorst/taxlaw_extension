@@ -178,13 +178,17 @@ async function callOpenAI({ messages, model = 'gpt-4o-mini', temperature = 0.2, 
   }
 }
 
-// 판례 상세 페이지 가져오기 함수 (새 탭 방식) - 변경 없음
-async function fetchPrecedentDetailViaTab(docId, senderId) {
+// 판례 상세 페이지 가져오기 함수 (새 탭 방식)
+async function fetchPrecedentDetailViaTab(docId, senderId, docType, caseType) {
   return new Promise((resolve) => {
-    console.log('[Background] Opening new tab for docId:', docId);
+    console.log('[Background] Opening new tab for docId:', docId, 'docType:', docType, 'caseType:', caseType);
 
-    // docId가 12자리가 아니면 패딩
-    const paddedDocId = String(docId).padStart(12, '0');
+    // docId가 001로 시작하면 제거 (질의의 경우)
+    let processedDocId = String(docId);
+    if (processedDocId.startsWith('001')) {
+      processedDocId = processedDocId.substring(3);
+      console.log('[Background] Removed 001 prefix, new docId:', processedDocId);
+    }
 
     // UUID 생성
     const wnkey = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -193,7 +197,19 @@ async function fetchPrecedentDetailViaTab(docId, senderId) {
       return v.toString(16);
     });
 
-    const detailUrl = `https://taxlaw.nts.go.kr/pd/USEPDA002P.do?ntstDcmId=${paddedDocId}&wnkey=${wnkey}`;
+    // docType에 따라 다른 URL 사용
+    console.log('[Background] DocType check:', docType, 'is 질의?', docType === '질의');
+
+    let detailUrl;
+    if (docType === 'question' || docType === '질의') {
+      console.log('[Background] Using QUESTION URL (qt)');
+      detailUrl = `https://taxlaw.nts.go.kr/qt/USEQTA002P.do?ntstDcmId=${processedDocId}&wnKey=${wnkey}`;
+    } else {
+      console.log('[Background] Using PRECEDENT URL (pd)');
+      // 판례의 경우 12자리 패딩 필요할 수 있음
+      const paddedDocId = processedDocId.length < 12 ? processedDocId.padStart(12, '0') : processedDocId;
+      detailUrl = `https://taxlaw.nts.go.kr/pd/USEPDA002P.do?ntstDcmId=${paddedDocId}&wnkey=${wnkey}`;
+    }
     console.log('[Background] Opening URL:', detailUrl);
 
     // 새 탭을 백그라운드에서 열기
@@ -268,11 +284,34 @@ async function fetchPrecedentDetailViaTab(docId, senderId) {
                   }, 500);
                 });
               }
-            }, () => {
+            }, (results) => {
+              // 첫 번째 스크립트 실행 에러 체크
+              if (chrome.runtime.lastError) {
+                console.error('[Background] Error waiting for elements:', chrome.runtime.lastError);
+                chrome.tabs.remove(tabId, () => {});
+                resolve({
+                  success: false,
+                  docId: docId,
+                  error: 'Failed to wait for page elements: ' + chrome.runtime.lastError.message
+                });
+                return;
+              }
+
+              if (!results || !results[0]) {
+                console.error('[Background] No results from wait script');
+                chrome.tabs.remove(tabId, () => {});
+                resolve({
+                  success: false,
+                  docId: docId,
+                  error: 'Failed to execute wait script'
+                });
+                return;
+              }
               // 요소가 로드된 후 콘텐츠 추출
               chrome.scripting.executeScript({
                 target: { tabId: tabId },
-                func: extractContentFromPage
+                func: extractContentFromPage,
+                args: [caseType]  // caseType을 인자로 전달
               }, (results) => {
                 // 탭 닫기 (에러 처리 포함)
                 chrome.tabs.remove(tabId, () => {
@@ -281,6 +320,17 @@ async function fetchPrecedentDetailViaTab(docId, senderId) {
                   }
                 });
 
+                // 두 번째 스크립트 실행 에러 체크
+                if (chrome.runtime.lastError) {
+                  console.error('[Background] Error extracting content:', chrome.runtime.lastError);
+                  resolve({
+                    success: false,
+                    docId: docId,
+                    error: 'Failed to extract content: ' + chrome.runtime.lastError.message
+                  });
+                  return;
+                }
+
                 if (results && results[0] && results[0].result) {
                   const extractedData = results[0].result;
                   console.log('[Background] Content extracted successfully:', {
@@ -288,6 +338,13 @@ async function fetchPrecedentDetailViaTab(docId, senderId) {
                     contentLength: extractedData.content ? extractedData.content.length : 0,
                     caseNumber: extractedData.caseNumber,
                     date: extractedData.date,
+                    hasGist: !!extractedData.gist,
+                    gistLength: extractedData.gist ? extractedData.gist.length : 0,
+                    hasDecision: !!extractedData.decision,
+                    decisionLength: extractedData.decision ? extractedData.decision.length : 0,
+                    hasReply: !!extractedData.reply,
+                    replyLength: extractedData.reply ? extractedData.reply.length : 0,
+                    docType: extractedData.docType,
                     debug: extractedData.debug
                   });
 
@@ -334,13 +391,18 @@ async function fetchPrecedentDetailViaTab(docId, senderId) {
   });
 }
 
-// 페이지에서 콘텐츠 추출하는 함수 (주입될 스크립트) - 변경 없음
-function extractContentFromPage() {
+// 페이지에서 콘텐츠 추출하는 함수 (주입될 스크립트)
+function extractContentFromPage(passedCaseType) {
   const result = {
     content: null,
     title: null,
     caseNumber: null,
     date: null,
+    gist: null,  // 요지 추가
+    reply: null, // 회신 추가
+    decision: null, // 결정내용 추가
+    docType: null, // 문서 타입 추가
+    caseType: passedCaseType, // 전달받은 caseType 저장
     debug: {}
   };
 
@@ -363,6 +425,326 @@ function extractContentFromPage() {
       }
     });
     result.debug.uniqueClasses = Array.from(allClasses).slice(0, 20); // 처음 20개만
+
+    // URL에서 문서 타입 확인 (qt = 질의, pd = 판례)
+    const isQuestion = window.location.pathname.includes('/qt/');
+    result.docType = isQuestion ? '질의' : '판례';
+
+    // URL 파라미터에서 ntstDcmClCd 확인
+    const urlParams = new URLSearchParams(window.location.search);
+    const ntstDcmClCd = urlParams.get('ntstDcmClCd');
+    const shouldExtractGistAndDecision = (ntstDcmClCd === '09' || ntstDcmClCd === '10');
+    console.log('[Extract] ntstDcmClCd:', ntstDcmClCd, 'shouldExtractGistAndDecision:', shouldExtractGistAndDecision);
+
+    // 심사/심판/적부/이의/헌재/판례/종소 유형 확인 - 상세 페이지의 특정 위치에서 확인
+    let isSimsa = false;
+    let isSimpan = false;
+    let isJeokbu = false;
+    let isEui = false;
+    let isHeonjae = false;
+    let isPanrye = false;
+    let isJongso = false;
+    let hasGistAndDecision = false;  // 요지와 결정/판결내용이 있는 유형인지 확인
+    let detectedCaseType = null;
+
+    // 1. 상세 페이지의 legislation_list에서 유형 추출 (상세 페이지 구조)
+    // 상세 페이지에서는 ul.legislation_list가 직접적으로 존재
+    const legislationListElement = document.querySelector('ul.legislation_list li:first-child');
+
+    if (legislationListElement) {
+      detectedCaseType = legislationListElement.textContent.trim();
+      console.log('[Extract] legislation_list에서 유형 추출:', detectedCaseType);
+
+      if (detectedCaseType === '심사' || detectedCaseType.includes('심사')) {
+        isSimsa = true;
+        result.docType = '심사';
+        result.caseType = '심사';
+        console.log('[Extract] 심사 유형 확인됨 (legislation_list)');
+      } else if (detectedCaseType === '심판' || detectedCaseType.includes('심판')) {
+        isSimpan = true;
+        result.docType = '심판';
+        result.caseType = '심판';
+        console.log('[Extract] 심판 유형 확인됨 (legislation_list)');
+      } else if (detectedCaseType === '적부' || detectedCaseType.includes('적부')) {
+        isJeokbu = true;
+        result.docType = '적부';
+        result.caseType = '적부';
+        console.log('[Extract] 적부 유형 확인됨 (legislation_list)');
+      } else if (detectedCaseType === '이의' || detectedCaseType.includes('이의')) {
+        isEui = true;
+        result.docType = '이의';
+        result.caseType = '이의';
+        console.log('[Extract] 이의 유형 확인됨 (legislation_list)');
+      } else if (detectedCaseType === '헌재' || detectedCaseType.includes('헌재')) {
+        isHeonjae = true;
+        result.docType = '헌재';
+        result.caseType = '헌재';
+        console.log('[Extract] 헌재 유형 확인됨 (legislation_list)');
+      } else if (detectedCaseType === '판례' || detectedCaseType.includes('판례')) {
+        isPanrye = true;
+        result.docType = '판례';
+        result.caseType = '판례';
+        console.log('[Extract] 판례 유형 확인됨 (legislation_list)');
+      } else if (detectedCaseType === '종소' || detectedCaseType.includes('종소')) {
+        isJongso = true;
+        result.docType = '종소';
+        result.caseType = '종소';
+        console.log('[Extract] 종소 유형 확인됨 (legislation_list)');
+      }
+
+      // 모든 유형에 대해 요지와 결정/판결내용 추출 필요
+      if (detectedCaseType || shouldExtractGistAndDecision) {
+        hasGistAndDecision = true;
+        console.log('[Extract] 요지와 결정/판결내용 추출 필요 유형:', detectedCaseType, '(ntstDcmClCd:', ntstDcmClCd, ')');
+      }
+    }
+
+    // 2. 대체 방법: data-value-type 속성 확인
+    if (!detectedCaseType) {
+      const typeElements = document.querySelectorAll('[data-value-type]');
+      typeElements.forEach(el => {
+        const typeValue = el.getAttribute('data-value-type');
+        const typeText = el.textContent.trim();
+        console.log('[Extract] data-value-type element:', typeValue, typeText);
+
+        if (typeText === '심사' || typeText.includes('심사')) {
+          detectedCaseType = typeText;
+          isSimsa = true;
+          result.docType = '심사';
+          result.caseType = '심사';
+          console.log('[Extract] 심사 유형 확인됨 (data-value-type)');
+        } else if (typeText === '심판' || typeText.includes('심판')) {
+          detectedCaseType = typeText;
+          isSimpan = true;
+          result.docType = '심판';
+          result.caseType = '심판';
+          console.log('[Extract] 심판 유형 확인됨 (data-value-type)');
+        } else if (typeText === '적부' || typeText.includes('적부')) {
+          detectedCaseType = typeText;
+          isJeokbu = true;
+          result.docType = '적부';
+          result.caseType = '적부';
+          console.log('[Extract] 적부 유형 확인됨 (data-value-type)');
+        } else if (typeText === '이의' || typeText.includes('이의')) {
+          detectedCaseType = typeText;
+          isEui = true;
+          result.docType = '이의';
+          result.caseType = '이의';
+          console.log('[Extract] 이의 유형 확인됨 (data-value-type)');
+        } else if (typeText === '헌재' || typeText.includes('헌재')) {
+          detectedCaseType = typeText;
+          isHeonjae = true;
+          result.docType = '헌재';
+          result.caseType = '헌재';
+          console.log('[Extract] 헌재 유형 확인됨 (data-value-type)');
+        } else if (typeText === '판례' || typeText.includes('판례')) {
+          detectedCaseType = typeText;
+          isPanrye = true;
+          result.docType = '판례';
+          result.caseType = '판례';
+          console.log('[Extract] 판례 유형 확인됨 (data-value-type)');
+        }
+      });
+    }
+
+    // 3. 전달받은 caseType이 있으면 사용 ('강제추출' 포함)
+    if (!hasGistAndDecision) {
+      // '강제추출'일 때는 무조건 요지와 결정내용 추출
+      if (passedCaseType === '강제추출') {
+        hasGistAndDecision = true;
+        console.log('[Extract] 강제추출 모드 - 유형에 관계없이 요지/결정내용 추출');
+      }
+      if (passedCaseType === '심사') {
+        isSimsa = true;
+        result.docType = '심사';
+        result.caseType = '심사';
+        console.log('[Extract] 전달받은 caseType으로 심사 유형 확인:', passedCaseType);
+      } else if (passedCaseType === '심판') {
+        isSimpan = true;
+        result.docType = '심판';
+        result.caseType = '심판';
+        console.log('[Extract] 전달받은 caseType으로 심판 유형 확인:', passedCaseType);
+      } else if (passedCaseType === '적부') {
+        isJeokbu = true;
+        result.docType = '적부';
+        result.caseType = '적부';
+        console.log('[Extract] 전달받은 caseType으로 적부 유형 확인:', passedCaseType);
+      } else if (passedCaseType === '이의') {
+        isEui = true;
+        result.docType = '이의';
+        result.caseType = '이의';
+        console.log('[Extract] 전달받은 caseType으로 이의 유형 확인:', passedCaseType);
+      } else if (passedCaseType === '헌재') {
+        isHeonjae = true;
+        result.docType = '헌재';
+        result.caseType = '헌재';
+        console.log('[Extract] 전달받은 caseType으로 헌재 유형 확인:', passedCaseType);
+      } else if (passedCaseType === '판례') {
+        isPanrye = true;
+        result.docType = '판례';
+        result.caseType = '판례';
+        console.log('[Extract] 전달받은 caseType으로 판례 유형 확인:', passedCaseType);
+      } else if (passedCaseType === '종소') {
+        isJongso = true;
+        result.docType = '종소';
+        result.caseType = '종소';
+        console.log('[Extract] 전달받은 caseType으로 종소 유형 확인:', passedCaseType);
+      }
+
+      // 전달받은 caseType이 있거나 ntstDcmClCd가 09/10이면 요지와 결정/판겲내용 추출
+      if (passedCaseType || shouldExtractGistAndDecision) {
+        hasGistAndDecision = true;
+        console.log('[Extract] 요지/결정내용 추출 필요:', passedCaseType, '(ntstDcmClCd:', ntstDcmClCd, ')');
+      }
+    }
+
+    // 4. 마지막 폴백: 페이지 텍스트에서 확인
+    if (!isSimsa && !isSimpan && !isJeokbu && !isEui && !isHeonjae && !isPanrye) {
+      const pageText = document.body.textContent;
+      if (pageText.includes('유형 : 심사') || pageText.includes('구분 : 심사')) {
+        isSimsa = true;
+        result.docType = '심사';
+        result.caseType = '심사';
+        console.log('[Extract] 페이지 텍스트에서 심사 유형 감지');
+      } else if (pageText.includes('유형 : 심판') || pageText.includes('구분 : 심판')) {
+        isSimpan = true;
+        result.docType = '심판';
+        result.caseType = '심판';
+        console.log('[Extract] 페이지 텍스트에서 심판 유형 감지');
+      } else if (pageText.includes('유형 : 적부') || pageText.includes('구분 : 적부')) {
+        isJeokbu = true;
+        result.docType = '적부';
+        result.caseType = '적부';
+        console.log('[Extract] 페이지 텍스트에서 적부 유형 감지');
+      } else if (pageText.includes('유형 : 이의') || pageText.includes('구분 : 이의')) {
+        isEui = true;
+        result.docType = '이의';
+        result.caseType = '이의';
+        console.log('[Extract] 페이지 텍스트에서 이의 유형 감지');
+      } else if (pageText.includes('유형 : 헌재') || pageText.includes('구분 : 헌재')) {
+        isHeonjae = true;
+        result.docType = '헌재';
+        result.caseType = '헌재';
+        console.log('[Extract] 페이지 텍스트에서 헌재 유형 감지');
+      } else if (pageText.includes('유형 : 판례') || pageText.includes('구분 : 판례')) {
+        isPanrye = true;
+        result.docType = '판례';
+        result.caseType = '판례';
+        console.log('[Extract] 페이지 텍스트에서 판례 유형 감지');
+      }
+    }
+
+    console.log('[Extract] 최종 유형 판단:', {
+      isSimsa: isSimsa,
+      isSimpan: isSimpan,
+      isJeokbu: isJeokbu,
+      isEui: isEui,
+      isHeonjae: isHeonjae,
+      isPanrye: isPanrye,
+      docType: result.docType,
+      caseType: result.caseType,
+      detectedCaseType: detectedCaseType,
+      passedCaseType: passedCaseType
+    });
+
+    // 질의 유형인 경우 요지와 회신 추출
+    if (isQuestion) {
+      // 요지 추출
+      const gistElement = document.querySelector('div.word_group[data-center-type="body_content_gist"]');
+      if (gistElement) {
+        result.gist = gistElement.innerText || gistElement.textContent;
+        result.debug.gistFound = true;
+        result.debug.gistLength = result.gist ? result.gist.length : 0;
+      }
+
+      // 회신 추출
+      const replyElement = document.querySelector('div.word_group[data-center-type="body_content_cntn"]');
+      if (replyElement) {
+        result.reply = replyElement.innerText || replyElement.textContent;
+        result.debug.replyFound = true;
+        result.debug.replyLength = result.reply ? result.reply.length : 0;
+      }
+    }
+
+    // 모든 유형에 대해 요지와 결정/판결내용 추출 시도 (ntstDcmClCd가 09/10일 때 포함)
+    if (hasGistAndDecision || detectedCaseType || passedCaseType || shouldExtractGistAndDecision) {
+      const typeName = result.caseType || detectedCaseType || passedCaseType || '판례';
+      console.log(`[Extract] ===== ${typeName} 유형 요지/결정내용 추출 시작 =====`);
+
+      // 디버깅을 위한 모든 word_group 요소 확인 (먼저 실행)
+      const allWordGroups = document.querySelectorAll('div.word_group');
+      console.log('[Extract] 전체 word_group 수:', allWordGroups.length);
+      const wordGroupInfo = [];
+      allWordGroups.forEach((group, index) => {
+        const dataType = group.getAttribute('data-center-type');
+        const hasContent = group.textContent && group.textContent.trim().length > 0;
+        const info = {
+          index: index,
+          'data-center-type': dataType,
+          'hasContent': hasContent,
+          'contentLength': group.textContent ? group.textContent.trim().length : 0
+        };
+        wordGroupInfo.push(info);
+        console.log(`[Extract] word_group[${index}]:`, info);
+      });
+
+      // 요지 추출 (심사도 동일한 data-center-type 사용)
+      const gistElement = document.querySelector('div.word_group[data-center-type="body_content_gist"]');
+      console.log('[Extract] 요지 요소 찾기:', !!gistElement);
+
+      if (gistElement) {
+        result.gist = gistElement.innerText || gistElement.textContent;
+        result.debug.gistFound = true;
+        result.debug.gistLength = result.gist ? result.gist.length : 0;
+        console.log('[Extract] ✓ 요지 추출 성공:', {
+          length: result.debug.gistLength,
+          preview: result.gist ? result.gist.substring(0, 100) + '...' : 'empty'
+        });
+      } else {
+        console.log('[Extract] ✗ 요지 요소를 찾을 수 없음');
+        result.debug.gistFound = false;
+      }
+
+      // 결정내용/판결내용 추출 (판례의 경우 '판결내용'이지만 동일하게 처리)
+      const decisionElement = document.querySelector('div.word_group[data-center-type="body_content_cntn"]');
+      console.log('[Extract] 결정내용/판결내용 요소 찾기 (body_content_cntn):', !!decisionElement);
+
+      if (decisionElement) {
+        result.decision = decisionElement.innerText || decisionElement.textContent;
+        result.debug.decisionFound = true;
+        result.debug.decisionLength = result.decision ? result.decision.length : 0;
+        console.log('[Extract] ✓ 결정내용 추출 성공:', {
+          length: result.debug.decisionLength,
+          preview: result.decision ? result.decision.substring(0, 100) + '...' : 'empty'
+        });
+      } else {
+        // 대체 시도: body_content_decision
+        const altDecisionElement = document.querySelector('div.word_group[data-center-type="body_content_decision"]');
+        console.log('[Extract] 결정내용 요소 찾기 (body_content_decision):', !!altDecisionElement);
+
+        if (altDecisionElement) {
+          result.decision = altDecisionElement.innerText || altDecisionElement.textContent;
+          result.debug.decisionFound = true;
+          result.debug.decisionLength = result.decision ? result.decision.length : 0;
+          console.log('[Extract] ✓ 결정내용 추출 성공 (대체):', {
+            length: result.debug.decisionLength,
+            preview: result.decision ? result.decision.substring(0, 100) + '...' : 'empty'
+          });
+        } else {
+          console.log('[Extract] ✗ 결정내용 요소를 찾을 수 없음');
+          result.debug.decisionFound = false;
+        }
+      }
+
+      // 추가 디버깅: 사용 가능한 data-center-type 목록
+      const availableTypes = wordGroupInfo.filter(info => info['data-center-type']).map(info => info['data-center-type']);
+      console.log('[Extract] 사용 가능한 data-center-type 목록:', availableTypes);
+
+      console.log(`[Extract] ===== ${typeName} 유형 처리 완료 =====`, {
+        gistFound: result.debug.gistFound,
+        decisionFound: result.debug.decisionFound
+      });
+    }
 
     // 방법 1: 정확한 경로로 찾기
     // div[data-center-type="body_content"] > div.word_group (3번째) > [data-center-type="body_content_htmlCntn"]
@@ -460,10 +842,42 @@ function extractContentFromPage() {
       }
     }
 
+    // 제목 추출 시도
+    // 방법 1: legislation_list와 함께 있는 strong 태그 찾기
+    const titleElement = document.querySelector('div.substance_wrap a strong');
+    if (titleElement) {
+      result.title = titleElement.textContent.trim();
+      console.log('[Extract] Title found via substance_wrap:', result.title);
+    }
+
+    // 방법 2: 대체 방법 - 페이지의 첫 번째 strong 태그 (일정 길이 이상)
+    if (!result.title) {
+      const strongElements = document.querySelectorAll('strong');
+      for (const elem of strongElements) {
+        const text = elem.textContent.trim();
+        if (text && text.length > 10 && text.length < 300 && !text.includes('조심-') && !text.includes('국심-')) {
+          result.title = text;
+          console.log('[Extract] Title found via strong element:', result.title);
+          break;
+        }
+      }
+    }
+
     // 판례번호 찾기
-    const caseNumberMatch = document.body.innerText.match(/조심-\d{4}-[가-힣]+-\d+|국심-\d{4}-\d+|대법원\s*\d{4}[가-힣]+\d+/);
-    if (caseNumberMatch) {
-      result.caseNumber = caseNumberMatch[0];
+    // 방법 1: subs_detail의 첫 번째 li에서 찾기
+    const subsDetailLi = document.querySelector('ul.subs_detail li:first-child strong');
+    if (subsDetailLi) {
+      result.caseNumber = subsDetailLi.textContent.trim();
+      console.log('[Extract] Case number found via subs_detail:', result.caseNumber);
+    }
+
+    // 방법 2: 텍스트에서 패턴 매칭
+    if (!result.caseNumber) {
+      const caseNumberMatch = document.body.innerText.match(/조심-\d{4}-[가-힣]+-\d+|국심-\d{4}-\d+|대법원\s*\d{4}[가-힣]+\d+/);
+      if (caseNumberMatch) {
+        result.caseNumber = caseNumberMatch[0];
+        console.log('[Extract] Case number found via regex:', result.caseNumber);
+      }
     }
 
     // 날짜 찾기
@@ -544,7 +958,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     case 'MSG_FETCH_DETAIL':
       // 새 탭 방식 시도
-      fetchPrecedentDetailViaTab(request.docId, sender.tab.id).then(result => {
+      // forceExtractGistAndDecision이 true면 caseType을 '강제추출'로 설정하여 전달
+      let effectiveCaseType = request.caseType;
+      if (request.forceExtractGistAndDecision) {
+        console.log('[Background] forceExtractGistAndDecision=true (ntstDcmClCd:', request.ntstDcmClCd, ')');
+        effectiveCaseType = effectiveCaseType || '강제추출';  // caseType이 없으면 '강제추출'로 설정
+      }
+
+      fetchPrecedentDetailViaTab(request.docId, sender.tab.id, request.docType, effectiveCaseType).then(result => {
         sendResponse(result);
       }).catch(error => {
         console.error('[Background] Tab method failed:', error);

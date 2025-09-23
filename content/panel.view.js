@@ -186,7 +186,7 @@
       background: #f0f8ff;
       border: 1px solid #b0d4ff;
       border-radius: 4px;
-      padding: 15px;
+      padding: 0;
       margin-top: 15px;
       max-height: 500px;
       overflow-y: auto;
@@ -197,13 +197,13 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 15px;
-      padding-bottom: 10px;
+      padding: 15px 15px 10px 15px;
+      margin-bottom: 0;
       border-bottom: 2px solid #b0d4ff;
       position: sticky;
       top: 0;
       background: #f0f8ff;
-      z-index: 1;
+      z-index: 10;
     }
 
     #tax-law-side-panel .llm-result-title {
@@ -230,6 +230,10 @@
 
     #tax-law-side-panel .llm-copy-btn.copied {
       background: #28a745;
+    }
+
+    #tax-law-side-panel .llm-result-body {
+      padding: 15px;
     }
 
     #tax-law-side-panel .llm-content-section {
@@ -412,6 +416,20 @@
       // 로딩 상태 확인
       if (data.loading) {
         contentDiv.innerHTML = `
+          ${data.clickedInfo && data.clickedInfo.caseNumber ? `
+          <div class="info-section">
+            <div class="info-label">📋 판례번호</div>
+            <div class="info-value" style="font-weight: 600; color: #0066cc;">${data.clickedInfo.caseNumber}</div>
+          </div>
+          ` : ''}
+
+          ${data.clickedInfo && data.clickedInfo.title ? `
+          <div class="info-section">
+            <div class="info-label">📄 제목</div>
+            <div class="info-value">${data.clickedInfo.title}</div>
+          </div>
+          ` : ''}
+
           <div class="loading">
             판례 상세 내용을 불러오는 중...
           </div>
@@ -597,6 +615,14 @@
     });
   }
   
+  // HTML 이스케이프 함수
+  function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
   // 매칭 방법 텍스트 변환
   function getMatchMethodText(method) {
     const methodTexts = {
@@ -845,7 +871,9 @@
               <h4 class="llm-result-title">📋 AI 요약 결과</h4>
               <button class="llm-copy-btn" id="llm-copy-btn">📄 복사</button>
             </div>
-            ${formattedHTML}
+            <div class="llm-result-body">
+              ${formattedHTML}
+            </div>
           </div>
         `;
 
@@ -1015,13 +1043,29 @@
   }
 
   // 판례 내용 전처리 함수
-  function preprocessContent(content, caseType, isHeonjaeDetail = false) {
+  function preprocessContent(content, caseType, isHeonjaeDetail = false, docType = null, additionalData = {}) {
     if (!content) return { formatted: content, jumun: '', reason: '', reasonUnits: [] };
 
     let processedContent = content;
     let jumun = '';
     let reason = '';
     let reasonUnits = [];
+
+    // 모든 문서에 대해 PDF 헤더 제거 (가장 먼저 처리)
+    console.log('[Panel] 헤더 제거 전 caseType:', caseType);
+    console.log('[Panel] 헤더 제거 전 내용 (처음 200자):', processedContent.substring(0, 200));
+
+    // 상세내용 PDF로 보기 ? 패턴 제거 (줄바꿈 포함)
+    processedContent = processedContent.replace(/상세내용[\s\n]*PDF로\s*보기[\s\n]*\?/g, '');
+    processedContent = processedContent.replace(/상세내용\s+안에\s+있는\s+표나\s+도형\s+등이[^\n]*/g, '');
+
+    // 개별 부분이 남아있을 경우 제거
+    processedContent = processedContent.replace(/^[\s\n]*상세내용[\s\n]*/g, '');
+    processedContent = processedContent.replace(/^[\s\n]*PDF로\s*보기[\s\n]*/g, '');
+    processedContent = processedContent.replace(/^[\s\n]*\?[\s\n]*/g, '');
+
+    processedContent = processedContent.trim();
+    console.log('[Panel] 헤더 제거 후 내용 (처음 100자):', processedContent.substring(0, 100));
 
     // 헌재상세 페이지 특별 처리
     if (isHeonjaeDetail) {
@@ -1040,37 +1084,116 @@
       };
     }
 
+    // 질의 유형이고 '주 문'이 없는 경우 처리
+    if (docType === '질의' && !content.includes('주 문') && !content.includes('주문')) {
+      console.log('[Panel] 질의 유형 - 주문 없음 - 헤더만 제거하고 전체 내용 표시');
+      const headerPattern = /상세내용\s*PDF로 보기\s*상세내용 안에 있는 표나 도형 등이 제대로 표시가 되지 않을 경우[^\n]*\?/;
+      processedContent = processedContent.replace(headerPattern, '').trim();
+
+      // 요지와 회신을 포함하여 포맷
+      let formattedContent = '';
+      if (additionalData.gist) {
+        formattedContent += '【요지】\n' + additionalData.gist + '\n\n';
+      }
+      if (additionalData.reply) {
+        formattedContent += '【회신】\n' + additionalData.reply + '\n\n';
+      }
+      formattedContent += processedContent;
+
+      // 연속된 줄바꿈 정리
+      formattedContent = formattedContent.replace(/\n{3,}/g, '\n\n');
+
+      return {
+        formatted: formattedContent,
+        jumun: '',
+        reason: '',
+        reasonUnits: []
+      };
+    }
+
+    // 심사, 심판, 적부, 이의, 헌재, 판례, 종소 유형인 경우 특별 처리 (헤더는 이미 제거됨)
+    if (caseType === '심사' || caseType === '심판' || caseType === '적부' || caseType === '이의' || caseType === '헌재' || caseType === '판례' || caseType === '종소') {
+      console.log('[Panel] 심사/심판/적부/이의/헌재/판례/종소 유형 감지:', caseType);
+
+      // 심사/심판/적부/이의/헌재/판례/종소도 주문이 없을 수 있으므로 체크
+      if (!processedContent.includes('주 문') && !processedContent.includes('주문')) {
+        console.log('[Panel] ' + caseType + ' 유형 - 주문 없음');
+
+        // 요지와 결정내용을 포함하여 포맷
+        let formattedContent = '';
+        if (additionalData.gist) {
+          formattedContent += '【요지】\n' + additionalData.gist + '\n\n';
+        }
+        if (additionalData.decision) {
+          formattedContent += '【결정내용】\n' + additionalData.decision + '\n\n';
+        }
+        formattedContent += processedContent;
+
+        // 연속된 줄바꿈 정리
+        formattedContent = formattedContent.replace(/\n{3,}/g, '\n\n');
+
+        return {
+          formatted: formattedContent,
+          jumun: '',
+          reason: '',
+          reasonUnits: []
+        };
+      }
+    }
+
     // 먼저 모든 주문/이유 패턴을 표준 형식으로 통일
     const mainPatternReplacements = [
+      // 한 줄에 '주문'만 있는 경우도 '주 문'으로 변경
+      [/^주문$/gm, '주 문'],
+      [/^이유$/gm, '이 유'],
       ['[주 문]', '주 문'],
       ['【주 문】', '주 문'],
-      ['【주문】', '주 문']
+      ['【주문】', '주 문'],
+      ['주문', '주 문']  // '주문'만 있는 경우도 표준화
     ];
 
     const reasonPatternReplacements = [
       ['[이 유]', '이 유'],
       ['【이 유】', '이 유'],
-      ['【이유】', '이 유']
+      ['【이유】', '이 유'],
+      ['이유', '이 유']  // '이유'만 있는 경우도 표준화
     ];
 
-    // 패턴 치환 (독립된 줄에 있는 것만)
+    // 패턴 치환 - 먼저 정규식 패턴 적용
+    for (const [pattern, replacement] of mainPatternReplacements) {
+      if (pattern instanceof RegExp) {
+        processedContent = processedContent.replace(pattern, replacement);
+      }
+    }
+
+    for (const [pattern, replacement] of reasonPatternReplacements) {
+      if (pattern instanceof RegExp) {
+        processedContent = processedContent.replace(pattern, replacement);
+      }
+    }
+
+    // 그다음 문자열 패턴 치환 (독립된 줄에 있는 것만)
     const lines = processedContent.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const trimmedLine = lines[i].trim();
 
       // 주문 패턴 치환
       for (const [pattern, replacement] of mainPatternReplacements) {
-        if (trimmedLine === pattern || trimmedLine === pattern.replace(/\s/g, '')) {
-          lines[i] = lines[i].replace(trimmedLine, replacement);
-          break;
+        if (typeof pattern === 'string') {
+          if (trimmedLine === pattern || trimmedLine === pattern.replace(/\s/g, '')) {
+            lines[i] = lines[i].replace(trimmedLine, replacement);
+            break;
+          }
         }
       }
 
       // 이유 패턴 치환
       for (const [pattern, replacement] of reasonPatternReplacements) {
-        if (trimmedLine === pattern || trimmedLine === pattern.replace(/\s/g, '')) {
-          lines[i] = lines[i].replace(trimmedLine, replacement);
-          break;
+        if (typeof pattern === 'string') {
+          if (trimmedLine === pattern || trimmedLine === pattern.replace(/\s/g, '')) {
+            lines[i] = lines[i].replace(trimmedLine, replacement);
+            break;
+          }
         }
       }
     }
@@ -1475,12 +1598,37 @@
     // 앞뒤 공백 제거
     processedContent = processedContent.trim();
 
+    // 질의나 심사 유형인 경우 요지/회신/결정내용을 앞에 추가
+    let finalContent = processedContent;
+    if (docType === '질의' || caseType === '심사') {
+      let prefix = '';
+
+      // 요지 추가
+      if (additionalData.gist) {
+        prefix += '【요지】\n' + additionalData.gist + '\n\n';
+      }
+
+      // 질의인 경우 회신 추가
+      if (docType === '질의' && additionalData.reply) {
+        prefix += '【회신】\n' + additionalData.reply + '\n\n';
+      }
+
+      // 심사인 경우 결정내용 추가
+      if (caseType === '심사' && additionalData.decision) {
+        prefix += '【결정내용】\n' + additionalData.decision + '\n\n';
+      }
+
+      if (prefix) {
+        finalContent = prefix + processedContent;
+      }
+    }
+
     // 연속된 줄바꿈 정리 (3개 이상의 줄바꿈을 2개로)
-    processedContent = processedContent.replace(/\n{3,}/g, '\n\n');
+    finalContent = finalContent.replace(/\n{3,}/g, '\n\n');
 
     // 객체로 반환 (formatted: 표시용, jumun: 주문 내용, reason: 이유 내용, reasonUnits: 이유 섹션의 숫자 단위들)
     return {
-      formatted: processedContent,
+      formatted: finalContent,
       jumun: jumun,
       reason: reason,
       reasonUnits: reasonUnits
@@ -1495,7 +1643,14 @@
       detail: data?.detail,
       caseType: data?.detail?.caseType,
       caseNumber: data?.detail?.caseNumber,
-      title: data?.detail?.title
+      title: data?.detail?.title,
+      hasGist: !!data?.detail?.gist,
+      gistLength: data?.detail?.gist ? data.detail.gist.length : 0,
+      hasDecision: !!data?.detail?.decision,
+      decisionLength: data?.detail?.decision ? data.detail.decision.length : 0,
+      hasReply: !!data?.detail?.reply,
+      replyLength: data?.detail?.reply ? data.detail.reply.length : 0,
+      docType: data?.detail?.docType
     });
 
     const contentDiv = document.getElementById('panel-content');
@@ -1517,17 +1672,8 @@
         </div>
         ` : ''}
 
-        ${data.clickedInfo && data.clickedInfo.caseType ? `
-        <div class="info-section">
-          <div class="info-label">유형</div>
-          <div class="info-value">${data.clickedInfo.caseType}</div>
-        </div>
-        ` : detail.caseType ? `
-        <div class="info-section">
-          <div class="info-label">유형</div>
-          <div class="info-value">${detail.caseType}</div>
-        </div>
-        ` : ''}
+        <!-- 유형은 LLM 호출시에만 사용되며 화면에는 표시하지 않음 -->
+        ${''}
 
         ${data.clickedInfo && data.clickedInfo.title ? `
         <div class="info-section">
@@ -1542,7 +1688,49 @@
         ` : ''}
 
         ${detail.content ? (() => {
-          const processed = preprocessContent(detail.content, data.clickedInfo?.caseType || detail.caseType, data.isHeonjaeDetail);
+          const isQuestion = data.clickedInfo?.collectionType === '질의' || detail.docType === '질의';
+          const isSimsa = data.clickedInfo?.caseType === '심사' || detail.docType === '심사';
+          const isSimpan = data.clickedInfo?.caseType === '심판' || detail.docType === '심판';
+          const isJeokbu = data.clickedInfo?.caseType === '적부' || detail.docType === '적부';
+          const isEui = data.clickedInfo?.caseType === '이의' || detail.docType === '이의';
+          const isHeonjae = data.clickedInfo?.caseType === '헌재' || detail.docType === '헌재';
+          const isPanrye = data.clickedInfo?.caseType === '판례' || detail.docType === '판례';
+          const isJongso = data.clickedInfo?.caseType === '종소' || detail.docType === '종소';
+          const docType = data.clickedInfo?.collectionType || detail.docType;
+
+          // 요지와 결정/판결내용이 있는 유형인지 확인 (질의 제외 모든 유형)
+          const hasGistAndDecision = isSimsa || isSimpan || isJeokbu || isEui || isHeonjae || isPanrye || isJongso;
+
+          console.log('[Panel] Document type detection:', {
+            isQuestion: isQuestion,
+            isSimsa: isSimsa,
+            isSimpan: isSimpan,
+            isJeokbu: isJeokbu,
+            isEui: isEui,
+            isHeonjae: isHeonjae,
+            isPanrye: isPanrye,
+            isJongso: isJongso,
+            hasGistAndDecision: hasGistAndDecision,
+            docType: docType,
+            clickedCaseType: data.clickedInfo?.caseType,
+            detailCaseType: detail.caseType,
+            detailDocType: detail.docType,
+            hasGist: !!detail.gist,
+            hasDecision: !!detail.decision,
+            hasReply: !!detail.reply
+          });
+          const processed = preprocessContent(
+            detail.content,
+            data.clickedInfo?.caseType || detail.caseType,
+            data.isHeonjaeDetail,
+            docType,
+            {
+              gist: detail.gist,
+              reply: detail.reply,
+              decision: detail.decision
+            }
+          );
+
           // 나중에 jumun, reason, reasonUnits를 별도로 사용 가능
           window.__lastProcessedContent = {
             jumun: processed.jumun,
@@ -1551,22 +1739,36 @@
             caseType: data.clickedInfo?.caseType || detail.caseType,
             caseNumber: data.clickedInfo?.caseNumber || detail.caseNumber,
             title: data.clickedInfo?.title || detail.title,
-            docId: data.docId // docId 추가
+            docId: data.docId,
+            gist: detail.gist,  // 요지 추가
+            reply: detail.reply, // 회신 추가 (질의용)
+            decision: detail.decision, // 결정내용 추가 (심사용)
+            docType: detail.docType // 문서 타입 추가
           };
+
           console.log('[Panel] Processed content saved:', {
             jumunLength: processed.jumun.length,
             reasonLength: processed.reason.length,
-            reasonUnitsCount: processed.reasonUnits.length
+            reasonUnitsCount: processed.reasonUnits.length,
+            hasGist: !!detail.gist,
+            hasReply: !!detail.reply,
+            docType: detail.docType
           });
+
           return `
           <div class="ai-section">
             <button class="llm-button" id="llm-summarize-btn">
-              🤖 AI로 판례 요약하기
+              🤖 AI로 ${isQuestion ? '질의' : '판례'} 요약하기
             </button>
             <div id="llm-result-container"></div>
           </div>
 
           <div class="section-divider"></div>
+
+          <!-- 요지, 회신, 결정내용은 LLM 호출시에만 사용되며 화면에는 표시하지 않음 -->
+          ${''}  <!-- 요지 섹션 숨김 -->
+          ${''}  <!-- 회신 섹션 숨김 -->
+          ${''}  <!-- 결정내용 섹션 숨김 -->
 
           <div class="info-section">
             <div class="detail-toggle-header" id="detail-toggle-original">

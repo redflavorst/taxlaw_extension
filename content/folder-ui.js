@@ -253,6 +253,55 @@
     }
 
     /* 새 폴더 입력 */
+    /* 검색창 스타일 */
+    .folder-search-container {
+      padding: 12px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #dee2e6;
+    }
+
+    .folder-search-input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+
+    .folder-search-input:focus {
+      outline: none;
+      border-color: #0066cc;
+      box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
+    }
+
+    .folder-search-input::placeholder {
+      color: #999;
+    }
+
+    /* 검색 결과 스타일 */
+    .search-result-header {
+      padding: 12px;
+      background: #e9f5ff;
+      border-bottom: 1px solid #b3d9ff;
+      font-size: 14px;
+      color: #0066cc;
+      font-weight: 500;
+    }
+
+    .search-result-clear {
+      float: right;
+      color: #666;
+      cursor: pointer;
+      font-weight: normal;
+      font-size: 12px;
+    }
+
+    .search-result-clear:hover {
+      color: #0066cc;
+      text-decoration: underline;
+    }
+
     .new-folder-input-wrapper {
       display: flex;
       gap: 8px;
@@ -438,6 +487,13 @@
           </button>
         </div>
         <div id="new-folder-input-container"></div>
+        <div class="folder-search-container">
+          <input type="text"
+                 class="folder-search-input"
+                 id="folder-search-input"
+                 placeholder="판례번호 또는 제목으로 검색..."
+                 maxlength="100">
+        </div>
         <div class="folder-list" id="folder-list">
           <div class="loading">폴더 목록을 불러오는 중...</div>
         </div>
@@ -452,6 +508,24 @@
       document.getElementById('new-folder-btn')?.addEventListener('click', () => {
         this.showNewFolderInput();
       });
+
+      // 검색 입력창
+      const searchInput = document.getElementById('folder-search-input');
+      if (searchInput) {
+        let searchTimeout;
+        searchInput.addEventListener('input', (e) => {
+          clearTimeout(searchTimeout);
+          searchTimeout = setTimeout(() => {
+            this.searchSummaries(e.target.value);
+          }, 300); // 300ms 디바운싱
+        });
+
+        searchInput.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            this.searchSummaries(e.target.value);
+          }
+        });
+      }
     }
 
     showNewFolderInput() {
@@ -511,6 +585,12 @@
 
     renderFolders() {
       const listContainer = document.getElementById('folder-list');
+
+      // 요소가 없으면 리턴 (패널이 아직 생성되지 않은 경우)
+      if (!listContainer) {
+        console.log('[FolderUI] folder-list element not found yet');
+        return;
+      }
 
       if (this.folders.length === 0) {
         listContainer.innerHTML = '<div class="empty-folder">폴더가 없습니다.</div>';
@@ -649,7 +729,7 @@
                data-summary-id="${summary.id}"
                draggable="true">
             <div class="summary-card-header">
-              <span class="summary-case-number">${summary.metadata?.caseNumber || '판례'}</span>
+              <span class="summary-case-number">${summary.metadata?.caseNumber || summary.metadata?.caseType || '판례'}</span>
               <div class="summary-actions">
                 <button class="summary-action-btn delete-summary"
                         data-summary-id="${summary.id}"
@@ -1006,6 +1086,158 @@
       }
     }
 
+    // 검색 기능
+    async searchSummaries(query) {
+      const listContainer = document.getElementById('folder-list');
+
+      if (!query || query.trim() === '') {
+        // 검색어가 없으면 원래 폴더 목록 표시
+        this.renderFolders();
+        return;
+      }
+
+      const searchQuery = query.trim().toLowerCase();
+      listContainer.innerHTML = '<div class="loading">검색 중...</div>';
+
+      try {
+        // 모든 폴더의 요약을 검색
+        const searchResults = [];
+
+        for (const folder of this.folders) {
+          const summaries = await window.FolderStorage.summaries.getSummariesByFolder(folder.id);
+
+          for (const summary of summaries) {
+            // 판례번호 또는 제목에서 검색
+            const caseNumber = (summary.metadata?.caseNumber || '').toLowerCase();
+            const title = (summary.metadata?.title || '').toLowerCase();
+            const preview = (summary.preview || '').toLowerCase();
+
+            if (caseNumber.includes(searchQuery) ||
+                title.includes(searchQuery) ||
+                preview.includes(searchQuery)) {
+              searchResults.push({
+                ...summary,
+                folderName: folder.name,
+                folderId: folder.id
+              });
+            }
+          }
+        }
+
+        // 검색 결과 표시
+        this.renderSearchResults(searchResults, query);
+
+      } catch (error) {
+        console.error('[FolderUI] Search failed:', error);
+        listContainer.innerHTML = '<div class="error">검색 중 오류가 발생했습니다.</div>';
+      }
+    }
+
+    // 검색 결과 렌더링
+    renderSearchResults(results, query) {
+      const listContainer = document.getElementById('folder-list');
+
+      if (results.length === 0) {
+        listContainer.innerHTML = `
+          <div class="search-result-header">
+            '🔍 ${query}' 검색 결과: 0건
+            <span class="search-result-clear" id="search-clear-btn">
+              ❌ 초기화
+            </span>
+          </div>
+          <div class="empty-folder">검색 결과가 없습니다.</div>
+        `;
+        return;
+      }
+
+      // 폴더별로 그룹화
+      const groupedResults = {};
+      results.forEach(result => {
+        if (!groupedResults[result.folderId]) {
+          groupedResults[result.folderId] = {
+            folderName: result.folderName,
+            summaries: []
+          };
+        }
+        groupedResults[result.folderId].summaries.push(result);
+      });
+
+      let html = `
+        <div class="search-result-header">
+          '🔍 ${query}' 검색 결과: ${results.length}건
+          <span class="search-result-clear" id="search-clear-btn">
+            ❌ 초기화
+          </span>
+        </div>
+      `;
+
+      // 각 폴더의 검색 결과 표시
+      for (const [folderId, group] of Object.entries(groupedResults)) {
+        html += `
+          <div class="folder-item expanded">
+            <div class="folder-header">
+              <span class="folder-icon expanded">📂</span>
+              <span class="folder-name">${group.folderName}</span>
+              <span class="folder-count">${group.summaries.length}</span>
+            </div>
+            <div class="folder-content expanded">
+        `;
+
+        group.summaries.forEach(summary => {
+          const highlightedCaseNumber = this.highlightSearchTerm(summary.metadata?.caseNumber || '판례번호 없음', query);
+          const highlightedTitle = this.highlightSearchTerm(summary.metadata?.title || '제목 없음', query);
+          const highlightedPreview = this.highlightSearchTerm(summary.preview || '내용 없음', query);
+
+          html += `
+            <div class="summary-card" data-summary-id="${summary.id}" data-folder-id="${folderId}">
+              <div class="summary-card-header">
+                <div class="summary-case-number">${highlightedCaseNumber}</div>
+                <div class="summary-actions">
+                  <button class="summary-action-btn" onclick="window.__folderUI.viewSummaryDetail('${summary.id}', '${folderId}')" title="상세보기">🔍</button>
+                  <button class="summary-action-btn delete" onclick="window.__folderUI.deleteSummary('${summary.id}', '${folderId}')" title="삭제">🗑️</button>
+                </div>
+              </div>
+              <div class="summary-title">${highlightedTitle}</div>
+              <div class="summary-preview">${highlightedPreview}</div>
+              <div class="summary-date">${new Date(summary.createdAt).toLocaleDateString()}</div>
+            </div>
+          `;
+        });
+
+        html += `
+            </div>
+          </div>
+        `;
+      }
+
+      listContainer.innerHTML = html;
+
+      // 초기화 버튼에 이벤트 리스너 추가
+      const clearBtn = document.getElementById('search-clear-btn');
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          this.clearSearch();
+        });
+      }
+    }
+
+    // 검색어 하이라이트
+    highlightSearchTerm(text, searchTerm) {
+      if (!text || !searchTerm) return text;
+
+      const regex = new RegExp(`(${searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+      return text.replace(regex, '<mark style="background-color: #ffeb3b; padding: 2px;">$1</mark>');
+    }
+
+    // 검색 초기화
+    clearSearch() {
+      const searchInput = document.getElementById('folder-search-input');
+      if (searchInput) {
+        searchInput.value = '';
+      }
+      this.renderFolders();
+    }
+
     async saveSummary(folderId, summaryData) {
       try {
         const { docId, metadata, sections, preview } = summaryData;
@@ -1056,5 +1288,16 @@
 
   // 전역 노출
   window.FolderUI = FolderUI;
+
+  // 전역 함수로 초기화 기능 등록
+  window.__clearFolderSearch = function() {
+    const searchInput = document.getElementById('folder-search-input');
+    if (searchInput) {
+      searchInput.value = '';
+    }
+    if (window.__folderUI && window.__folderUI.renderFolders) {
+      window.__folderUI.renderFolders();
+    }
+  };
 
 })();

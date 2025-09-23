@@ -33,12 +33,11 @@
     try {
       console.log('[Fetcher] Starting fetch for docId:', docId);
       
-      // docId가 12자리가 아니면 패딩
-      const paddedDocId = String(docId).padStart(12, '0');
-      console.log('[Fetcher] Padded docId:', paddedDocId);
-      
+      // docId를 그대로 사용
+      console.log('[Fetcher] Using docId as-is:', docId);
+
       // 상세 페이지 URL 생성
-      const detailUrl = buildDetailUrl(paddedDocId);
+      const detailUrl = buildDetailUrl(docId);
       
       console.log('[Fetcher] Fetching URL:', detailUrl);
       
