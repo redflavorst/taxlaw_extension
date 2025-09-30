@@ -8,74 +8,114 @@
   // API 설정은 background script에서 관리
   // 직접 호출하지 않고 메시지를 통해 위임
 
-  // 프롬프트는 외부 파일에서 관리 (prompts 폴더)
-  // 폴백용 빈 객체만 유지
-  const PROMPTS = {};
+  // 프롬프트 템플릿
+  const PROMPTS = {
+    summarize: {
+      system: `너는 판결문 요약 보조자다. 아래 규칙을 반드시 엄격하게 지켜라.
 
-  /* 삭제된 내장 프롬프트 - 이제 prompts 폴더에서 관리 */
+[출력 포맷 고정 규칙] ★최우선 준수사항★
+- 섹션 제목은 아래 정확한 문자열과 콜론(:)을 사용한다. 이모지/숫자/괄호 머리글 절대 금지.
+  * "이 사건 간단 압축 요약" (콜론 없음, 하위 항목은 - 로 시작)
+  * "쟁점:"
+  * "주요 사실:"
+  * "법리 요지:"
+  * "구체 판단:"
+  * "결론/주문:"
+- 모든 섹션을 반드시 출력한다. 내용이 없으면 "- 없음" 명시(섹션 자체 생략 금지).
+- 각 섹션의 내용은 "- "로 시작하는 불릿 포인트로 작성한다.
+- 이모지, 숫자 머리글(1), 2), 3)), 마크다운 헤더(#, ##) 사용 금지.
 
-  // 프롬프트 로더를 통해 외부 프롬프트 가져오기
-  async function loadExternalPrompts() {
-    if (window.PromptLoader) {
-      const externalPrompts = await window.PromptLoader.getAllPrompts();
-      // 외부 프롬프트를 PROMPTS 객체에 병합
-      Object.keys(externalPrompts).forEach(key => {
-        PROMPTS[`summarize_${key}`] = externalPrompts[key];
-      });
-      console.log('[LLM API] External prompts loaded:', Object.keys(externalPrompts));
+[문단 인식 규칙]
+- 머리표시(1., 2., 가., 나., 1), 2), 가), 나))는 '제목행'으로 분류한다.
+- 제목행은 바로 뒤 본문과 결합해 하나의 문단으로 간주한다(단독이면 스코어 0).
+- '주문/청구취지/항소취지/이유/판단/결론' 같은 섹션 제목은 앵커로만 사용, 스코어링 제외.
+- 한 줄짜리라도 금액·일시·등기·송금·결론 연결어가 포함된 완결 문장이면 본문으로 인정.
+- 본문 내 가)나)다) 열거는 하위 서브문단으로 인식해 각각 1문장 요약 후 합친다.
+
+[인과·증거 강화 규칙]
+- 반드시 Why→How→What(원인→과정/증거→결과) 구조로 '구체 판단'을 작성한다.
+- 시간순 흐름이 중요한 경우 날짜를 명시한다.
+- '구체 판단' 각 불릿은 다음 요소를 포함: 원인, 증거(금액/일자/증빙), 법리(조문/판례 번호), 판단, 결과
+- 반론이 있으면 '구체 판단' 섹션 내에서 언급한다.
+- 가능하면 content.reasonUnits의 unit.number를 이용해 (근거: 문단 n, m) 표기.
+
+[중요도 선별 규칙]
+1) 문단들에 내부적으로 중요도 점수(0~5)를 매겨 상위 K개만 사용한다(K=7를 기본으로, 필요시 6~8 조정).
+   - 가중치+: 금액·일시·등기·송금, 자금흐름, 결론 연결어(따라서/그러나/결국/… 판단한다), 항변 인용/배척, 조문·판례 번호
+   - 가중치-: 원론적 법리 서설, 증거목록/호증 나열
+2) 상위 문단만 근거로 OUTPUT을 작성한다.
+3) 숫자·날짜·법적 효과(피보전채권/증여/사해/선의 항변 배척 등)는 반드시 남긴다.
+4) 한국어로, 불필요한 수식어 금지. 과도한 일반론·모호어 사용 금지.
+5) '주문'은 요약의 앵커로 삼되 스코어링에는 포함하지 않는다.`,
+      user: `[사용자 입력]
+판례 정보:
+- 유형: {caseType} 
+- 제목: {title}
+- 판례번호: {caseNumber}
+
+주문:
+{jumun}
+
+요약이 필요한 부분:
+{reasonContent}
+
+[OUTPUT 형식 - 아래 구조를 정확히 지켜서 출력]
+
+이 사건 간단 압축 요약
+- (첫 번째 핵심 내용, 80~120자)
+- (두 번째 핵심 내용, 80~120자)
+- (세 번째 핵심 내용, 80~120자)
+
+쟁점:
+- (첫 번째 쟁점)
+- (두 번째 쟁점)
+- (세 번째 쟁점, 필요시)
+
+주요 사실:
+- (중요 사실 1, 금액/일시 포함)
+- (중요 사실 2)
+- (중요 사실 3)
+- (중요 사실 4, 필요시)
+- (중요 사실 5, 필요시)
+
+법리 요지:
+- (적용 법리 1, 조문/판례 번호)
+- (적용 법리 2)
+- (적용 법리 3)
+- (적용 법리 4, 필요시)
+
+구체 판단:
+- (판단 1: 원인→증거→법리→결과 포함)
+- (판단 2)
+- (판단 3)
+- (판단 4, 필요시)
+- (판단 5, 필요시)
+
+결론/주문:
+- (최종 판결 내용)
+- (세액/이자/기산점 등)
+- (기타 중요 결정사항, 필요시)
+
+제한: 총 1,300~1,600자. 모든 섹션 필수 출력(내용 없으면 "- 없음" 명시)`
+    },
+    analyze: {
+      system: '당신은 법률 전문가입니다. 판례의 법적 쟁점을 분석합니다.',
+      user: `다음 판례의 법적 쟁점을 분석해주세요:
+
+{content}
+
+분석 내용:
+1. 주요 법적 쟁점
+2. 적용된 법리
+3. 판단 기준
+4. 실무적 시사점`
     }
-  }
+  };
 
   // LLM API 호출 함수 - background script로 위임
   async function callLLM(content, promptType = 'summarize', provider = 'openai') {
-    // 외부 프롬프트 로드 시도
-    await loadExternalPrompts();
-
-    // caseType에 따라 적절한 프롬프트 선택
-    let actualPromptType = promptType;
-    let selectedPrompt = null;
-
-    // PromptLoader를 사용하여 프롬프트 선택 (우선)
-    if (window.PromptLoader && content.caseType && promptType === 'summarize') {
-      selectedPrompt = await window.PromptLoader.getPrompt(content.caseType);
-      if (selectedPrompt) {
-        console.log(`[LLM API] Using external prompt for case type: ${content.caseType}`);
-      }
-    }
-
-    // 외부 프롬프트가 없는 경우 기존 매핑 사용 (폴백)
-    if (!selectedPrompt && promptType === 'summarize' && content.caseType) {
-      const caseTypeMapping = {
-        '심판': 'summarize_simpan',  // 심판 전용 프롬프트 사용
-        '심사': 'summarize_simsa',  // 심사청구 전용 프롬프트 사용
-        '이의': 'summarize_eui',  // 이의신청 전용 프롬프트 사용
-        '적부': 'summarize_jukbu',  // 과세전적부심사 전용 프롬프트 사용
-        '헌재': 'summarize_heonjae',  // 헌법재판소 전용 프롬프트 사용
-        '판례': 'summarize',  // 법원 판례
-        '종소': 'summarize',  // 현재는 동일 프롬프트 사용
-        '질의': 'summarize'   // 질의
-      };
-
-      // 매핑된 프롬프트 타입이 있으면 사용
-      if (caseTypeMapping[content.caseType]) {
-        actualPromptType = caseTypeMapping[content.caseType];
-      }
-
-      console.log(`[LLM API] Case type: ${content.caseType}, Using internal prompt: ${actualPromptType}`);
-    }
-
     // 프롬프트 생성
-    const prompt = selectedPrompt || PROMPTS[actualPromptType] || PROMPTS[promptType];
-
-    // prompt가 없으면 에러 반환
-    if (!prompt) {
-      console.error(`[LLM API] No prompt found for type: ${actualPromptType || promptType}`);
-      return {
-        success: false,
-        error: `No prompt defined for type: ${actualPromptType || promptType}`
-      };
-    }
-
+    const prompt = PROMPTS[promptType];
     const userMessage = formatPrompt(prompt.user, content);
 
     // 실제 전달되는 프롬프트 확인용 로그
@@ -97,14 +137,14 @@
 
     // background script로 메시지 전송
     const payload = {
-      model: 'gpt-4o',  // GPT-4o 모델 사용
+      model: 'gpt-4o-mini',  // GPT-4o-mini 모델 사용
       messages: [  // OpenAI API는 messages 형식 사용
         { role: 'system', content: prompt.system },
         { role: 'user', content: userMessage }
       ],
-      max_tokens: 2800,  // 더 긴 응답을 위해 2800으로 증가
-      temperature: 0.1,  // 일관된 포맷 준수를 위해 0.1로 낮춤
-      top_p: 1.0,
+      max_tokens: 2300,  // 더 긴 응답을 위해 2300으로 증가
+      temperature: 0.2,  // 일관된 포맷 준수를 위해 0.2로 낮춤
+      top_p: 0.9,
       stream: false  // 일단 스트리밍 비활성화 (안정성)
     };
 

@@ -75,7 +75,45 @@
       console.log('[Capture] Found item in bdltCtl');
     }
 
-    if (closestLI) {
+    // 상세페이지(USEPDA002P.do) 처리
+    if (window.location.pathname.includes('USEPDA002P.do')) {
+      console.log('[Capture] Detail page detected - extracting doc_id from URL');
+      const urlParams = new URLSearchParams(window.location.search);
+      const docId = urlParams.get('ntstDcmId');
+
+      if (docId) {
+        precedentInfo.docId = docId;
+        precedentInfo.isDetailPage = true;
+        precedentInfo.hasData = true;
+
+        // 페이지에서 추가 정보 추출
+        const titleElement = document.querySelector('.tit_area h3, .board_view_head h3, h2.tit, h3.tit');
+        if (titleElement) {
+          precedentInfo.title = titleElement.textContent.trim();
+        }
+
+        // caseType 추출 시도
+        const scrnNmElement = document.querySelector('#scrnNm');
+        if (scrnNmElement) {
+          const scrnNm = scrnNmElement.textContent;
+          const caseTypeMap = {
+            '판례상세': '판례',
+            '심판상세': '심판',
+            '심사상세': '심사',
+            '헌재상세': '헌재',
+            '종소상세': '종소',
+            '질의상세': '질의'
+          };
+          precedentInfo.caseType = caseTypeMap[scrnNm] || scrnNm;
+        }
+
+        console.log('[Capture] Detail page info:', {
+          docId: precedentInfo.docId,
+          title: precedentInfo.title,
+          caseType: precedentInfo.caseType
+        });
+      }
+    } else if (closestLI) {
       console.log('[Capture] Right-clicked on precedent item');
       
       // 1. rowIndex 저장 (가장 중요!)

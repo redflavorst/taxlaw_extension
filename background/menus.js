@@ -67,6 +67,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
             files: [
               'lib/network-id.js',
               'lib/docid-utils.js',
+              'llm/prompts/default.js',
+              'llm/prompts/simpan.js',
+              'llm/prompts/simsa.js',
+              'llm/prompts/index.js',
               'llm/api.js',
               'content/capture.js',
               'content/bridge.js',

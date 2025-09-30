@@ -118,28 +118,43 @@
     if (window.location.pathname.includes('USEISA001M.do') && clickedInfo.collectionType) {
       console.log('[Bridge] Keyword search page detected, checking window.__precedentListData');
 
+      // window.__precedentListData 직접 확인
       if (window.__precedentListData && window.__precedentListData.length > 0) {
         console.log('[Bridge] Found data in window.__precedentListData:', window.__precedentListData.length, 'items');
         savedPrecedentList = window.__precedentListData;
+
+        // 디버깅: 첫 번째 아이템 확인
+        if (savedPrecedentList[0]) {
+          console.log('[Bridge] First item in list:', {
+            docId: savedPrecedentList[0].docId,
+            collectionType: savedPrecedentList[0].collectionType,
+            caseNumber: savedPrecedentList[0].caseNumber
+          });
+        }
       } else {
-        console.log('[Bridge] No data in window.__precedentListData, will try to get from injector');
+        // savedPrecedentList가 이미 있는지 확인 (이전에 저장된 데이터)
+        if (savedPrecedentList.length > 0) {
+          console.log('[Bridge] Using previously saved list:', savedPrecedentList.length, 'items');
+        } else {
+          console.log('[Bridge] ⚠️ No precedent list data available!');
+          console.log('[Bridge] Please reload the search results first');
 
-        // Injector에서 데이터 가져오기 시도 - postMessage 사용
-        window.postMessage({
-          type: 'MSG_REQUEST_PRECEDENT_LIST',
-          data: {
-            timestamp: Date.now()
-          }
-        }, window.location.origin);
-        console.log('[Bridge] Requested precedent list from injector');
-
-        // 잠시 대기 후 다시 확인
-        setTimeout(() => {
-          if (savedPrecedentList.length === 0) {
-            console.log('[Bridge] Still no data after retry');
-          }
-        }, 100);
+          // 에러 메시지 전송
+          sendResponse({
+            success: false,
+            error: '검색 결과를 먼저 로드해주세요. 페이지를 새로고침하거나 검색을 다시 실행해주세요.',
+            clickedInfo: clickedInfo
+          });
+          return;
+        }
       }
+    }
+
+    // 0. 상세페이지에서 직접 클릭한 경우 처리
+    if (clickedInfo.isDetailPage && clickedInfo.docId) {
+      matchedDocId = clickedInfo.docId;
+      matchMethod = 'detailPageDirect';
+      console.log('[Bridge] ✅ Detail page direct click, docId:', matchedDocId);
     }
 
     // 1. rowIndex 매칭 (최우선)
@@ -149,15 +164,23 @@
     console.log('[Bridge] rowIndex 타입:', typeof clickedInfo.rowIndex);
     console.log('[Bridge] collectionType:', clickedInfo.collectionType);
 
-    if (savedPrecedentList.length > 0) {
+    if (!matchedDocId && savedPrecedentList.length > 0) {
       // 키워드 검색 페이지의 경우 컬렉션 타입도 확인
       if (clickedInfo.collectionType) {
+        console.log('[Bridge] Attempting collection + index matching');
+        console.log('[Bridge] Looking for:', {
+          collectionType: clickedInfo.collectionType,
+          rowIndex: clickedInfo.rowIndex
+        });
+
         // 컬렉션 타입과 인덱스로 매칭
         const matchingItems = savedPrecedentList.filter(
           item => item.collectionType === clickedInfo.collectionType
         );
 
-        if (matchingItems[clickedInfo.rowIndex]) {
+        console.log('[Bridge] Found items with matching collection:', matchingItems.length);
+
+        if (matchingItems.length > 0 && matchingItems[clickedInfo.rowIndex]) {
           const matchedItem = matchingItems[clickedInfo.rowIndex];
           matchedDocId = matchedItem.docId;
           matchMethod = 'index_collection';
@@ -169,6 +192,16 @@
             docId: matchedDocId,
             caseNumber: matchedItem.caseNumber,
             title: matchedItem.title
+          });
+        } else {
+          console.log('[Bridge] ✗ COLLECTION + INDEX 매칭 실패');
+          console.log('[Bridge] Available items in savedPrecedentList:');
+          savedPrecedentList.slice(0, 5).forEach((item, idx) => {
+            console.log(`[Bridge] [${idx}]`, {
+              docId: item.docId,
+              collectionType: item.collectionType,
+              caseNumber: item.caseNumber
+            });
           });
         }
       } else if (typeof clickedInfo.rowIndex === 'number' &&

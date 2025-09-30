@@ -108,6 +108,22 @@
       padding: 40px;
       color: #6c757d;
     }
+
+    #tax-law-side-panel .loading-spinner {
+      display: inline-block;
+      width: 40px;
+      height: 40px;
+      border: 4px solid #f3f3f3;
+      border-top: 4px solid #007bff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 15px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
     
     #tax-law-side-panel .error {
       background: #f8d7da;
@@ -369,7 +385,10 @@
         <button class="panel-close" id="panel-close-btn">×</button>
       </div>
       <div class="panel-content" id="panel-content">
-        <div class="loading">판례 정보를 불러오는 중...</div>
+        <div class="loading">
+          <div class="loading-spinner"></div>
+          <div>판례요약도우미 불러오는 중...</div>
+        </div>
       </div>
     `;
 
@@ -418,20 +437,21 @@
         contentDiv.innerHTML = `
           ${data.clickedInfo && data.clickedInfo.caseNumber ? `
           <div class="info-section">
-            <div class="info-label">📋 판례번호</div>
-            <div class="info-value" style="font-weight: 600; color: #0066cc;">${data.clickedInfo.caseNumber}</div>
+            <div class="info-label">판례번호</div>
+            <div class="info-value">${data.clickedInfo.caseNumber}</div>
           </div>
           ` : ''}
 
           ${data.clickedInfo && data.clickedInfo.title ? `
           <div class="info-section">
-            <div class="info-label">📄 제목</div>
+            <div class="info-label">제목</div>
             <div class="info-value">${data.clickedInfo.title}</div>
           </div>
           ` : ''}
 
           <div class="loading">
-            판례 상세 내용을 불러오는 중...
+            <div class="loading-spinner"></div>
+            <div>판례요약도우미 불러오는 중...</div>
           </div>
 
           <!-- 폴더 섹션 컨테이너 -->
@@ -459,21 +479,21 @@
           
           ${data.clickedInfo && data.clickedInfo.caseNumber ? `
           <div class="info-section">
-            <div class="info-label">📋 판례번호</div>
-            <div class="info-value" style="font-weight: 600; color: #0066cc;">${data.clickedInfo.caseNumber}</div>
+            <div class="info-label">판례번호</div>
+            <div class="info-value">${data.clickedInfo.caseNumber}</div>
           </div>
           ` : ''}
 
           ${data.clickedInfo && data.clickedInfo.caseType ? `
           <div class="info-section">
-            <div class="info-label">📑 유형</div>
+            <div class="info-label">유형</div>
             <div class="info-value">${data.clickedInfo.caseType}</div>
           </div>
           ` : ''}
 
           ${data.clickedInfo && data.clickedInfo.title ? `
           <div class="info-section">
-            <div class="info-label">📄 제목</div>
+            <div class="info-label">제목</div>
             <div class="info-value">${data.clickedInfo.title}</div>
           </div>
           ` : ''}
@@ -588,7 +608,7 @@
     navigator.clipboard.writeText(text).then(() => {
       button.textContent = '복사됨!';
       button.classList.add('copied');
-      
+
       setTimeout(() => {
         button.textContent = '복사';
         button.classList.remove('copied');
@@ -604,15 +624,89 @@
       textArea.select();
       document.execCommand('copy');
       document.body.removeChild(textArea);
-      
+
       button.textContent = '복사됨!';
       button.classList.add('copied');
-      
+
       setTimeout(() => {
         button.textContent = '복사';
         button.classList.remove('copied');
       }, 2000);
     });
+  }
+
+  // 파일 저장 함수
+  function saveAsMarkdown(text, caseNumber) {
+    // 텍스트를 마크다운 형식으로 변환
+    const markdownText = convertToMarkdown(text);
+
+    // 파일명 생성 (판례번호 기반)
+    let filename = 'summary';
+    if (caseNumber) {
+      // 특수문자를 하이픈으로 변경
+      filename = caseNumber
+        .replace(/[\s\/\\:*?"<>|]/g, '-')  // 파일명에 사용할 수 없는 문자를 하이픈으로
+        .replace(/^-+|-+$/g, '')  // 앞뒤 하이픈 제거
+        .replace(/-{2,}/g, '-');  // 연속된 하이픈을 하나로
+    }
+    filename += '.md';
+
+    // Blob 생성
+    const blob = new Blob([markdownText], { type: 'text/markdown;charset=utf-8' });
+
+    // 다운로드 링크 생성
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+
+    // 클릭 트리거
+    document.body.appendChild(a);
+    a.click();
+
+    // 정리
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    return filename;
+  }
+
+  // 텍스트를 마크다운 형식으로 변환하는 함수
+  function convertToMarkdown(text) {
+    const lines = text.split('\n');
+    const result = [];
+
+    // 섹션 제목 패턴들
+    const sectionTitles = [
+      '이 사건 간단 압축 요약',
+      '쟁점:',
+      '주요 사실:',
+      '법리 요지:',
+      '구체 판단:',
+      '결론/주문:',
+      '반론/배척 사유:'
+    ];
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+
+      // 섹션 제목인지 확인
+      let isSectionTitle = false;
+      for (const title of sectionTitles) {
+        if (trimmedLine === title || trimmedLine === title.replace(':', '')) {
+          // ### 헤더 추가
+          result.push('### ' + trimmedLine.replace(':', ''));
+          isSectionTitle = true;
+          break;
+        }
+      }
+
+      if (!isSectionTitle) {
+        result.push(line);
+      }
+    }
+
+    return result.join('\n');
   }
   
   // HTML 이스케이프 함수
@@ -852,7 +946,10 @@
 
     // 로딩 표시
     resultContainer.innerHTML = `
-      <div class="loading">AI가 판례를 분석하고 있습니다...</div>
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        <div>AI가 판례를 분석하고 있습니다...</div>
+      </div>
     `;
 
     try {
@@ -869,7 +966,7 @@
           <div class="llm-result">
             <div class="llm-result-header">
               <h4 class="llm-result-title">📋 AI 요약 결과</h4>
-              <button class="llm-copy-btn" id="llm-copy-btn">📄 복사</button>
+              <button class="llm-copy-btn" id="llm-save-btn">💾 저장</button>
             </div>
             <div class="llm-result-body">
               ${formattedHTML}
@@ -877,11 +974,23 @@
           </div>
         `;
 
-        // 복사 버튼 이벤트 설정
-        const copyBtn = document.getElementById('llm-copy-btn');
-        if (copyBtn) {
-          copyBtn.addEventListener('click', function() {
-            copyToClipboard(response.result, copyBtn);
+        // 저장 버튼 이벤트 설정
+        const saveBtn = document.getElementById('llm-save-btn');
+        if (saveBtn) {
+          saveBtn.addEventListener('click', function() {
+            const caseNumber = window.__lastProcessedContent?.caseNumber;
+            const filename = saveAsMarkdown(response.result, caseNumber);
+
+            // 버튼 텍스트 변경
+            saveBtn.textContent = '✅ 저장됨!';
+            saveBtn.classList.add('copied');
+
+            setTimeout(() => {
+              saveBtn.textContent = '💾 저장';
+              saveBtn.classList.remove('copied');
+            }, 2000);
+
+            console.log('[Panel] Saved as:', filename);
           });
         }
 
@@ -1743,7 +1852,8 @@
             gist: detail.gist,  // 요지 추가
             reply: detail.reply, // 회신 추가 (질의용)
             decision: detail.decision, // 결정내용 추가 (심사용)
-            docType: detail.docType // 문서 타입 추가
+            docType: detail.docType, // 문서 타입 추가
+            formatted: processed.formatted  // 전처리된 전체 내용 추가
           };
 
           console.log('[Panel] Processed content saved:', {
@@ -1763,48 +1873,8 @@
             <div id="llm-result-container"></div>
           </div>
 
-          <div class="section-divider"></div>
-
-          <!-- 요지, 회신, 결정내용은 LLM 호출시에만 사용되며 화면에는 표시하지 않음 -->
-          ${''}  <!-- 요지 섹션 숨김 -->
-          ${''}  <!-- 회신 섹션 숨김 -->
-          ${''}  <!-- 결정내용 섹션 숨김 -->
-
-          <div class="info-section">
-            <div class="detail-toggle-header" id="detail-toggle-original">
-              <div class="detail-toggle-title">
-                <span class="toggle-arrow" id="toggle-arrow-original">▼</span>
-                📑 판례 상세 내용 (원본)
-              </div>
-              <span style="font-size: 12px; color: #666;">클릭하여 펼치기/접기</span>
-            </div>
-            <div class="detail-content-wrapper" id="detail-content-wrapper-original" style="display: none;">
-              <div class="detail-content" style="background: #fff9e6; border-color: #ffc107;">
-                <pre>${detail.content}</pre>
-              </div>
-            </div>
-          </div>
-
-          <div class="info-section">
-            <div class="detail-toggle-header" id="detail-toggle">
-              <div class="detail-toggle-title">
-                <span class="toggle-arrow" id="toggle-arrow">▼</span>
-                📄 판례 상세 내용 (전처리 후)
-              </div>
-              <span style="font-size: 12px; color: #666;">클릭하여 펼치기/접기</span>
-            </div>
-            <div class="detail-content-wrapper" id="detail-content-wrapper">
-              <div class="detail-content">
-                <pre>${processed.formatted}</pre>
-              </div>
-            </div>
-          </div>
           `;
         })() : ''}
-
-        <div class="success">
-          판례 상세 내용을 성공적으로 불러왔습니다.
-        </div>
       `;
 
       // 폴더 UI 추가
@@ -1813,6 +1883,55 @@
         folderContainer.id = 'folder-container';
         contentDiv.appendChild(folderContainer);
         window.__folderUI = new window.FolderUI(folderContainer);
+      }
+
+      // 디버그용 섹션들을 폴더 컨테이너 하단에 추가
+      if (detail.content) {
+        // 기존 디버그 섹션이 있으면 제거
+        const existingDebug = document.getElementById('debug-section');
+        if (existingDebug) {
+          existingDebug.remove();
+        }
+
+        const debugSection = document.createElement('div');
+        debugSection.id = 'debug-section';
+        debugSection.innerHTML = `
+          <div class="section-divider"></div>
+          <div style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px;">
+            <div style="font-size: 12px; color: #666; margin-bottom: 10px;">🔍 디버그용 섹션</div>
+
+            <div class="info-section">
+              <div class="detail-toggle-header" id="detail-toggle-original">
+                <div class="detail-toggle-title">
+                  <span class="toggle-arrow" id="toggle-arrow-original">▼</span>
+                  📑 판례 상세 내용 (원본)
+                </div>
+                <span style="font-size: 12px; color: #666;">클릭하여 펼치기/접기</span>
+              </div>
+              <div class="detail-content-wrapper" id="detail-content-wrapper-original" style="display: none;">
+                <div class="detail-content" style="background: #fff9e6; border-color: #ffc107;">
+                  <pre>${detail.content}</pre>
+                </div>
+              </div>
+            </div>
+
+            <div class="info-section">
+              <div class="detail-toggle-header" id="detail-toggle">
+                <div class="detail-toggle-title">
+                  <span class="toggle-arrow" id="toggle-arrow">▼</span>
+                  📄 판례 상세 내용 (전처리 후)
+                </div>
+                <span style="font-size: 12px; color: #666;">클릭하여 펼치기/접기</span>
+              </div>
+              <div class="detail-content-wrapper" id="detail-content-wrapper">
+                <div class="detail-content">
+                  <pre>${window.__lastProcessedContent?.formatted || ''}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+        contentDiv.appendChild(debugSection);
       }
 
       // 복사 버튼 이벤트 재설정

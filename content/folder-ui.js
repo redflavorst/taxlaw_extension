@@ -140,15 +140,19 @@
 
     /* 폴더 내용 (요약 리스트) */
     .folder-content {
-      padding: 12px;
       max-height: 0;
       overflow: hidden;
-      transition: max-height 0.15s ease-out;  /* 300ms -> 150ms로 단축 */
+      transition: max-height 0.3s ease-in-out, padding 0.3s ease-in-out;
     }
 
     .folder-content.expanded {
+      padding: 12px;
       max-height: 500px;
       overflow-y: auto;
+    }
+
+    .folder-content:not(.expanded) {
+      padding: 0 12px;  /* 좌우 패딩은 유지, 상하만 0 */
     }
 
     .summary-card {
