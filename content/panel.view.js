@@ -18,6 +18,7 @@
       z-index: 999999;
       transition: right 0.3s ease;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      box-sizing: border-box;
     }
     
     #tax-law-side-panel.open {
@@ -61,6 +62,8 @@
       padding: 20px;
       height: calc(100vh - 60px);
       overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-gutter: stable;  /* 스크롤바 공간 미리 예약 */
     }
     
     #tax-law-side-panel .doc-id-display {
@@ -206,7 +209,10 @@
       margin-top: 15px;
       max-height: 500px;
       overflow-y: auto;
+      overflow-x: hidden;
       position: relative;
+      box-sizing: border-box;
+      width: 100%;
     }
 
     #tax-law-side-panel .llm-result-header {
@@ -254,6 +260,8 @@
 
     #tax-law-side-panel .llm-content-section {
       margin-bottom: 20px;
+      width: 100%;
+      box-sizing: border-box;
     }
 
     #tax-law-side-panel .llm-section-title {

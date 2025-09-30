@@ -48,6 +48,7 @@
     .folder-list {
       max-height: 60vh;
       overflow-y: auto;
+      overflow-x: hidden;  /* 가로 스크롤 방지 */
     }
 
     .folder-item {
@@ -149,6 +150,8 @@
       padding: 12px;
       max-height: 500px;
       overflow-y: auto;
+      overflow-x: hidden;  /* 가로 스크롤 방지 */
+      scrollbar-gutter: stable;  /* 스크롤바 공간 미리 예약 */
     }
 
     .folder-content:not(.expanded) {
@@ -161,8 +164,10 @@
       border-radius: 6px;
       padding: 12px;
       margin-bottom: 10px;
+      margin-right: 2px;  /* 스크롤바 공간 확보 */
       cursor: pointer;
       transition: all 0.2s;
+      box-sizing: border-box;  /* 패딩이 너비에 영향 주지 않도록 */
     }
 
     .summary-card:hover {
